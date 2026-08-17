@@ -16,6 +16,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     authError: '',
     authConfirmMsg: '',
     authSending: false,
+    recuperandoSenha: false,
+    novaSenhaError: '',
     tab: 'dashboard',
     theme: localStorage.getItem('app_theme') || 'dark',
     produtos: [], solicitacoes: [], logs: [], emailControle: '',
@@ -28,6 +30,15 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   function fmtDate(iso){ const d=new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
   function fmtMoney(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
   function elFrag(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+
+  // Escapa texto antes de inserir no HTML. Este painel exibe dados enviados por
+  // COLABORADORES (não confiáveis) na tela do ADMIN — todo campo de texto livre
+  // (nome, motivo, endereço, item, fornecedor...) precisa passar por aqui antes
+  // de entrar em um template de innerHTML, ou vira um vetor de XSS armazenado.
+  function esc(v){
+    if(v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
   function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
   function buildMailto(email, subject, body){
@@ -214,11 +225,17 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     state.loaded = true;
     render();
 
-    supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      if(event === 'PASSWORD_RECOVERY'){
+        state.session = session;
+        state.recuperandoSenha = true;
+        render();
+        return;
+      }
       state.session = session;
-      if(session){
+      if(session && !state.recuperandoSenha){
         await bootstrapAdmin();
-      } else {
+      } else if(!state.recuperandoSenha) {
         state.isAdmin = null;
         state.produtos = []; state.solicitacoes = []; state.logs = []; state.emailControle = '';
       }
@@ -278,6 +295,39 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     await supabaseClient.auth.signOut();
   }
 
+  async function doRecuperarSenha(email){
+    if(!isValidEmail(email)){ state.authError = 'Informe um e-mail válido.'; render(); return; }
+    state.authError = ''; state.authConfirmMsg = ''; state.authSending = true; render();
+
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+
+    state.authSending = false;
+    if(error){ state.authError = error.message; render(); return; }
+
+    state.authMode = 'login';
+    state.authConfirmMsg = 'Se esse e-mail estiver cadastrado como admin, enviamos um link para redefinir a senha.';
+    render();
+  }
+
+  async function doDefinirNovaSenha(novaSenha, confirmarSenha){
+    state.novaSenhaError = '';
+    if(!novaSenha || novaSenha.length < 6){ state.novaSenhaError = 'A senha deve ter ao menos 6 caracteres.'; render(); return; }
+    if(novaSenha !== confirmarSenha){ state.novaSenhaError = 'As senhas não coincidem.'; render(); return; }
+
+    state.authSending = true; render();
+    const { error } = await supabaseClient.auth.updateUser({ password: novaSenha });
+    state.authSending = false;
+
+    if(error){ state.novaSenhaError = error.message; render(); return; }
+
+    state.recuperandoSenha = false;
+    await bootstrapAdmin();
+    render();
+    showToast('Senha atualizada com sucesso!');
+  }
+
   // ==========================================================================
   // Render
   // ==========================================================================
@@ -286,6 +336,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     app.innerHTML = '';
     if(!state.loaded){ app.appendChild(elFrag(`<div style="padding:40px;" class="dim mono">Conectando ao banco de dados...</div>`)); return; }
 
+    if(state.recuperandoSenha){ renderDefinirNovaSenhaModal(); return; }
     if(!state.session){ renderLogin(); return; }
 
     if(state.isAdmin === null){ app.appendChild(elFrag(`<div style="padding:40px;" class="dim mono">Verificando permissões...</div>`)); return; }
@@ -371,6 +422,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // Tela de login/cadastro (autenticação real via Supabase Auth).
   function renderLogin(){
+    if(state.authMode === 'recuperar'){ renderRecuperarSenhaModal(); return; }
+
     const isSignup = state.authMode === 'signup';
     const overlay = elFrag(`
       <div class="overlay">
@@ -379,9 +432,10 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <p class="modal-sub">${isSignup ? 'Cadastre-se com o e-mail autorizado como administrador.' : 'Entre com seu e-mail e senha de administrador.'}</p>
           <div class="field"><label>E-mail</label><input id="login-email" type="email" placeholder="nome@empresa.com" autofocus></div>
           <div class="field"><label>Senha</label><input id="login-senha" type="password" placeholder="${isSignup ? 'Mínimo 6 caracteres' : 'Sua senha'}"></div>
-          ${state.authConfirmMsg ? `<div style="color:var(--ok); font-size:12.5px; margin-bottom:12px;">${state.authConfirmMsg}</div>` : ''}
-          ${state.authError ? `<div style="color:var(--danger); font-size:12.5px; margin-bottom:12px;">${state.authError}</div>` : ''}
-          <button class="primary" id="login-btn" style="width:100%;" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Aguarde...' : (isSignup ? 'Criar conta' : 'Entrar')}</button>
+          ${!isSignup ? `<div style="text-align:right; margin-top:6px;"><span id="link-esqueci-senha" style="color:var(--steel); cursor:pointer; text-decoration:underline; font-size:12px;">Esqueci minha senha</span></div>` : ''}
+          ${state.authConfirmMsg ? `<div style="color:var(--ok); font-size:12.5px; margin-top:12px;">${state.authConfirmMsg}</div>` : ''}
+          ${state.authError ? `<div style="color:var(--danger); font-size:12.5px; margin-top:12px;">${state.authError}</div>` : ''}
+          <button class="primary" id="login-btn" style="width:100%; margin-top:14px;" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Aguarde...' : (isSignup ? 'Criar conta' : 'Entrar')}</button>
           <div style="text-align:center; margin-top:14px; font-size:12.5px;">
             <span class="dim">${isSignup ? 'Já tem conta?' : 'Precisa criar a conta de admin?'}</span>
             <span id="toggle-auth-mode" style="color:var(--steel); cursor:pointer; text-decoration:underline; margin-left:4px;">${isSignup ? 'Entrar' : 'Criar conta'}</span>
@@ -402,7 +456,68 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       state.authError = ''; state.authConfirmMsg = '';
       render();
     };
+
+    const linkEsqueci = overlay.querySelector('#link-esqueci-senha');
+    if(linkEsqueci) linkEsqueci.onclick = () => {
+      state.authMode = 'recuperar';
+      state.authError = ''; state.authConfirmMsg = '';
+      render();
+    };
   }
+
+  function renderRecuperarSenhaModal(){
+    const overlay = elFrag(`
+      <div class="overlay">
+        <div class="modal login-box">
+          <h3>Recuperar Senha</h3>
+          <p class="modal-sub">Informe o e-mail da conta de administrador. Vamos enviar um link para redefinir a senha.</p>
+          <div class="field"><label>E-mail</label><input id="recuperar-email" type="email" placeholder="nome@empresa.com" autofocus></div>
+          ${state.authError ? `<div style="color:var(--danger); font-size:12.5px; margin-top:12px;">${state.authError}</div>` : ''}
+          <button class="primary" id="recuperar-btn" style="width:100%; margin-top:14px;" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Enviando...' : 'Enviar link de recuperação'}</button>
+          <div style="text-align:center; margin-top:14px; font-size:12.5px;">
+            <span id="voltar-login" style="color:var(--steel); cursor:pointer; text-decoration:underline;">← Voltar para o login</span>
+          </div>
+        </div>
+      </div>
+    `);
+    app.appendChild(overlay);
+
+    const emailInput = overlay.querySelector('#recuperar-email');
+    const btn = overlay.querySelector('#recuperar-btn');
+    const doSubmit = () => doRecuperarSenha(emailInput.value);
+    btn.onclick = doSubmit;
+    emailInput.onkeydown = (e) => { if(e.key === 'Enter') doSubmit(); };
+    overlay.querySelector('#voltar-login').onclick = () => {
+      state.authMode = 'login';
+      state.authError = '';
+      render();
+    };
+  }
+
+  function renderDefinirNovaSenhaModal(){
+    const overlay = elFrag(`
+      <div class="overlay">
+        <div class="modal login-box">
+          <h3>Definir Nova Senha</h3>
+          <p class="modal-sub">Escolha uma nova senha para sua conta de administrador.</p>
+          <div class="field"><label>Nova Senha</label><input id="nova-senha" type="password" placeholder="Mínimo 6 caracteres" autofocus></div>
+          <div class="field"><label>Confirmar Nova Senha</label><input id="confirmar-senha" type="password" placeholder="Repita a nova senha"></div>
+          ${state.novaSenhaError ? `<div style="color:var(--danger); font-size:12.5px; margin-top:12px;">${state.novaSenhaError}</div>` : ''}
+          <button class="primary" id="definir-senha-btn" style="width:100%; margin-top:14px;" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Salvando...' : 'Salvar Nova Senha'}</button>
+        </div>
+      </div>
+    `);
+    app.appendChild(overlay);
+
+    const novaSenhaInput = overlay.querySelector('#nova-senha');
+    const confirmarInput = overlay.querySelector('#confirmar-senha');
+    const btn = overlay.querySelector('#definir-senha-btn');
+    const doSubmit = () => doDefinirNovaSenha(novaSenhaInput.value, confirmarInput.value);
+    btn.onclick = doSubmit;
+    novaSenhaInput.onkeydown = (e) => { if(e.key === 'Enter') confirmarInput.focus(); };
+    confirmarInput.onkeydown = (e) => { if(e.key === 'Enter') doSubmit(); };
+  }
+
 
   function renderAcessoNegado(){
     const overlay = elFrag(`
@@ -462,10 +577,10 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 <thead><tr><th>Colaborador</th><th>Material</th><th>Qtd.</th><th>Urgência</th><th>Data</th></tr></thead>
                 <tbody>${pendentes.slice(0,5).map(s=>`
                   <tr>
-                    <td style="font-weight:500;">${s.nome}</td>
-                    <td>${s.item}</td>
+                    <td style="font-weight:500;">${esc(s.nome)}</td>
+                    <td>${esc(s.item)}</td>
                     <td class="mono">${s.quantidade}</td>
-                    <td><span class="badge urg-${s.urgencia}">${s.urgencia.toUpperCase()}</span></td>
+                    <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
                     <td class="dim mono">${fmtDate(s.dataCriacao)}</td>
                   </tr>
                 `).join('')}</tbody>
@@ -502,8 +617,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
               <thead><tr><th>Material</th><th>SKU</th><th>Estoque Atual</th><th>Estoque Mínimo</th><th>Ação</th></tr></thead>
               <tbody>${abaixoMinimo.map(p=>`
                 <tr>
-                  <td style="font-weight:500;">${p.nome}</td>
-                  <td class="mono dim">${p.sku}</td>
+                  <td style="font-weight:500;">${esc(p.nome)}</td>
+                  <td class="mono dim">${esc(p.sku)}</td>
                   <td class="mono" style="color:var(--danger); font-weight:600;">${p.estoque} ${p.unidade}</td>
                   <td class="mono dim">${p.quantidadeMinima} ${p.unidade}</td>
                   <td><button class="icon-btn" data-repor="${p.id}">Repor / Editar</button></td>
@@ -585,13 +700,13 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <thead><tr><th>Material</th><th>SKU</th><th>Categoria</th><th>Estoque Atual</th><th>Mín. Exigido</th><th>Custo Unit.</th><th>Fornecedor</th><th>Ações</th></tr></thead>
           <tbody>${list.map(p=>`
             <tr>
-              <td style="font-weight:500;">${p.nome}</td>
-              <td class="mono dim">${p.sku}</td>
-              <td class="dim">${p.categoria}</td>
+              <td style="font-weight:500;">${esc(p.nome)}</td>
+              <td class="mono dim">${esc(p.sku)}</td>
+              <td class="dim">${esc(p.categoria)}</td>
               <td class="mono" style="${p.estoque <= p.quantidadeMinima ?'color:var(--danger); font-weight:bold;':''}">${p.estoque} <small class="dim">${p.unidade}</small></td>
               <td class="mono dim">${p.quantidadeMinima} ${p.unidade}</td>
               <td class="mono">${fmtMoney(p.preco)}</td>
-              <td class="dim">${p.fornecedor||'—'}</td>
+              <td class="dim">${esc(p.fornecedor)||'—'}</td>
               <td style="white-space:nowrap;">
                 <button class="icon-btn" data-act="editar" data-id="${p.id}">Editar</button>
                 <button class="icon-btn danger" data-act="excluir" data-id="${p.id}">Excluir</button>
@@ -662,11 +777,11 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <thead><tr><th>Colaborador</th><th>Material / Descrição</th><th>Qtd</th><th>Urgência</th><th>Status</th><th>Data</th><th>Ações / Gestão</th></tr></thead>
           <tbody>${list.map(s=>`
             <tr>
-              <td><strong>${s.nome}</strong><br><span class="email-cell">${s.email}</span></td>
-              <td>${s.item}</td>
+              <td><strong>${esc(s.nome)}</strong><br><span class="email-cell">${esc(s.email)}</span></td>
+              <td>${esc(s.item)}</td>
               <td class="mono" style="font-weight:bold;">${s.quantidade}</td>
-              <td><span class="badge urg-${s.urgencia}">${s.urgencia.toUpperCase()}</span></td>
-              <td><span class="badge ${s.status}">${s.status.toUpperCase()}</span></td>
+              <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
+              <td><span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span></td>
               <td class="dim mono" style="font-size:11px;">${fmtDate(s.dataCriacao)}</td>
               <td>
                 <button class="icon-btn" data-act="detalhes" data-id="${s.id}">Ver</button>
@@ -709,9 +824,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             <tbody>${state.logs.map(l=>`
               <tr>
                 <td class="mono dim" style="font-size:11.5px; white-space:nowrap;">${fmtDate(l.data)}</td>
-                <td><span class="badge" style="color:var(--steel); border-color:var(--border);">${l.usuario}</span></td>
-                <td style="font-weight:600; font-family:var(--font-mono); font-size:12px;">${l.acao}</td>
-                <td class="dim">${l.detalhe}</td>
+                <td><span class="badge" style="color:var(--steel); border-color:var(--border);">${esc(l.usuario)}</span></td>
+                <td style="font-weight:600; font-family:var(--font-mono); font-size:12px;">${esc(l.acao)}</td>
+                <td class="dim">${esc(l.detalhe)}</td>
               </tr>
             `).join('')}</tbody>
           </table>
@@ -728,7 +843,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         <div class="panel-head"><h3>Configurações Globais</h3></div>
         <div class="field">
           <label>E-mail Responsável pelo Recebimento de Solicitações</label>
-          <input id="cfg-email" value="${state.emailControle}" placeholder="yuri.silva1@sgs.com">
+          <input id="cfg-email" value="${esc(state.emailControle)}" placeholder="yuri.silva1@sgs.com">
         </div>
         <button class="primary" id="btn-salvar-cfg" style="margin-top:12px;">Salvar Alterações</button>
       </div>
@@ -755,10 +870,10 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       inner = `
         <h3>${p.id ? 'Editar Produto / Estoque' : 'Cadastrar Novo Produto'}</h3>
         <p class="modal-sub">Preencha as informações técnicas e os níveis do item.</p>
-        <div class="field"><label>Nome do Material / Descrição *</label><input id="m-nome" value="${p.nome||''}"></div>
+        <div class="field"><label>Nome do Material / Descrição *</label><input id="m-nome" value="${esc(p.nome)}"></div>
         <div class="field-row">
-          <div class="field"><label>SKU / Código *</label><input id="m-sku" value="${p.sku||''}"></div>
-          <div class="field"><label>Categoria *</label><input id="m-cat" value="${p.categoria||'EPIs'}"></div>
+          <div class="field"><label>SKU / Código *</label><input id="m-sku" value="${esc(p.sku)}"></div>
+          <div class="field"><label>Categoria *</label><input id="m-cat" value="${p.categoria ? esc(p.categoria) : 'EPIs'}"></div>
         </div>
         <div class="field-row">
           <div class="field"><label>Quantidade / Estoque Atual *</label><input id="m-qtd" type="number" min="0" value="${p.estoque !== undefined ? p.estoque : 25}"></div>
@@ -766,7 +881,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         </div>
         <div class="field-row">
           <div class="field"><label>Preço Unitário (R$)</label><input id="m-preco" type="number" step="0.01" min="0" value="${p.preco || 35.0}"></div>
-          <div class="field"><label>Fornecedor</label><input id="m-forn" value="${p.fornecedor||'Suprimentos Corporativos'}"></div>
+          <div class="field"><label>Fornecedor</label><input id="m-forn" value="${p.fornecedor ? esc(p.fornecedor) : 'Suprimentos Corporativos'}"></div>
         </div>
         <div class="modal-actions">
           <button class="secondary" id="modal-cancel">Cancelar</button>
@@ -777,7 +892,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       const p = m.produto;
       inner = `
         <h3>Excluir Produto</h3>
-        <p class="modal-sub">Tem certeza que deseja remover permanentemente o item <strong>${p.nome}</strong> (${p.sku}) do catálogo?</p>
+        <p class="modal-sub">Tem certeza que deseja remover permanentemente o item <strong>${esc(p.nome)}</strong> (${esc(p.sku)}) do catálogo?</p>
         <div class="modal-actions">
           <button class="secondary" id="modal-cancel">Cancelar</button>
           <button class="primary" style="background:var(--danger); color:#fff;" id="modal-confirm-del">Sim, Excluir</button>
@@ -793,8 +908,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             <thead><tr><th>Material</th><th>SKU</th><th>Estoque</th><th>Mínimo</th></tr></thead>
             <tbody>${abaixo.map(p=>`
               <tr>
-                <td>${p.nome}</td>
-                <td class="mono dim">${p.sku}</td>
+                <td>${esc(p.nome)}</td>
+                <td class="mono dim">${esc(p.sku)}</td>
                 <td class="mono" style="color:var(--danger); font-weight:bold;">${p.estoque}</td>
                 <td class="mono dim">${p.quantidadeMinima}</td>
               </tr>
@@ -823,23 +938,23 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         <h3>Detalhes da Requisição</h3>
         <p class="modal-sub">Informações completas do pedido enviado pelo colaborador.</p>
         <dl class="detail-grid">
-          <dt>Solicitante</dt><dd>${s.nome}</dd>
-          <dt>E-mail</dt><dd><a href="${mailtoLink}" style="color:var(--steel); text-decoration:underline;">${s.email} ✉️ (Enviar E-mail)</a></dd>
-          <dt>Matrícula</dt><dd>${s.matricula || '—'}</dd>
-          <dt>Setor / Centro</dt><dd>${s.setor || '—'} (${s.centroCusto || '—'})</dd>
-          <dt>Material</dt><dd style="font-weight:600; color:var(--amber);">${s.item}</dd>
+          <dt>Solicitante</dt><dd>${esc(s.nome)}</dd>
+          <dt>E-mail</dt><dd><a href="${esc(mailtoLink)}" style="color:var(--steel); text-decoration:underline;">${esc(s.email)} ✉️ (Enviar E-mail)</a></dd>
+          <dt>Matrícula</dt><dd>${esc(s.matricula) || '—'}</dd>
+          <dt>Setor / Centro</dt><dd>${esc(s.setor) || '—'} (${esc(s.centroCusto) || '—'})</dd>
+          <dt>Material</dt><dd style="font-weight:600; color:var(--amber);">${esc(s.item)}</dd>
           <dt>Quantidade</dt><dd class="mono">${s.quantidade}</dd>
-          <dt>Urgência</dt><dd><span class="badge urg-${s.urgencia}">${s.urgencia.toUpperCase()}</span></dd>
-          <dt>Status Atual</dt><dd><span class="badge ${s.status}">${s.status.toUpperCase()}</span></dd>
+          <dt>Urgência</dt><dd><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></dd>
+          <dt>Status Atual</dt><dd><span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span></dd>
           <dt>Data do Pedido</dt><dd class="mono">${fmtDate(s.dataCriacao)}</dd>
         </dl>
         <div class="field" style="margin-top:16px;">
           <label>Endereço de Entrega:</label>
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${s.endereco || 'Não informado.'}</div>
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${esc(s.endereco) || 'Não informado.'}</div>
         </div>
         <div class="field" style="margin-top:12px;">
           <label>Observações:</label>
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${s.motivo || 'Nenhuma observação informada.'}</div>
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${esc(s.motivo) || 'Nenhuma observação informada.'}</div>
         </div>
         <div class="modal-actions">
           <button class="primary" id="modal-cancel">Fechar</button>
