@@ -83,6 +83,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       quantidade: row.quantidade,
       urgencia: row.urgencia,
       motivo: row.motivo,
+      endereco: row.endereco,
       status: row.status,
       dataCriacao: row.data_criacao
     };
@@ -256,7 +257,14 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     if(!isValidEmail(email)){ state.authError = 'Informe um e-mail válido.'; render(); return; }
     if(!senha || senha.length < 6){ state.authError = 'A senha deve ter ao menos 6 caracteres.'; render(); return; }
     state.authError = ''; state.authConfirmMsg = ''; state.authSending = true; render();
-    const { data, error } = await supabaseClient.auth.signUp({ email: email.trim().toLowerCase(), password: senha });
+    // emailRedirectTo garante que, ao confirmar o e-mail, o admin volte para
+    // ESTE painel (e não para o "Site URL" padrão, que aponta para o portal
+    // do colaborador, um domínio diferente).
+    const { data, error } = await supabaseClient.auth.signUp({
+      email: email.trim().toLowerCase(),
+      password: senha,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    });
     state.authSending = false;
     if(error){ state.authError = error.message; render(); return; }
     if(!data.session){
@@ -630,7 +638,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     content.appendChild(panel);
 
     panel.querySelector('#export-solicitacoes').onclick = () => {
-      exportarCSV(state.solicitacoes.map(s => ({ Solicitante: s.nome, Email: s.email, Setor: s.setor, Material: s.item, Quantidade: s.quantidade, Urgencia: s.urgencia, Status: s.status, Data: s.dataCriacao })), 'Relatorio_Solicitacoes');
+      exportarCSV(state.solicitacoes.map(s => ({ Solicitante: s.nome, Email: s.email, Setor: s.setor, Material: s.item, Quantidade: s.quantidade, Endereco: s.endereco, Urgencia: s.urgencia, Status: s.status, Data: s.dataCriacao })), 'Relatorio_Solicitacoes');
     };
 
     panel.querySelector('#busca-sol').oninput = (e)=>{ state.buscaSolicitacao=e.target.value; renderTable(); };
@@ -826,7 +834,11 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <dt>Data do Pedido</dt><dd class="mono">${fmtDate(s.dataCriacao)}</dd>
         </dl>
         <div class="field" style="margin-top:16px;">
-          <label>Observações / Motivo:</label>
+          <label>Endereço de Entrega:</label>
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${s.endereco || 'Não informado.'}</div>
+        </div>
+        <div class="field" style="margin-top:12px;">
+          <label>Observações:</label>
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${s.motivo || 'Nenhuma observação informada.'}</div>
         </div>
         <div class="modal-actions">
