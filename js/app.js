@@ -185,6 +185,46 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 
   // Muda o status de uma solicitação via função segura no banco (ela cuida do estoque).
+  // Envia um e-mail real via a Edge Function "send-email" (usa a Resend).
+  async function enviarEmail({ to, subject, html }){
+    if(!state.session) return { error: 'Sem sessão ativa.' };
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.session.access_token}` },
+        body: JSON.stringify({ to, subject, html })
+      });
+      const data = await resp.json();
+      if(!resp.ok){ return { error: data.error || 'Falha ao enviar e-mail.' }; }
+      return { data };
+    } catch (err) {
+      return { error: err.message || 'Falha ao enviar e-mail.' };
+    }
+  }
+
+  const STATUS_LABEL = { aprovado: 'Aprovado ✅', rejeitado: 'Rejeitado ❌', entregue: 'Entregue 📦', pendente: 'Pendente', cancelado: 'Cancelado' };
+  const STATUS_COR = { aprovado: '#10B981', rejeitado: '#FF3F00', entregue: '#0EA5E9', pendente: '#FF7F11', cancelado: '#94A3B8' };
+
+  // Notifica o colaborador por e-mail sobre a mudança de status do próprio pedido.
+  async function notificarColaborador(sol, novoStatus){
+    if(!sol || !sol.email) return;
+    const label = STATUS_LABEL[novoStatus] || novoStatus.toUpperCase();
+    const cor = STATUS_COR[novoStatus] || '#666';
+    const html = `
+      <div style="font-family:sans-serif; max-width:560px;">
+        <h2 style="color:${cor};">Atualização da sua solicitação</h2>
+        <p>Olá, ${esc(sol.nome)}.</p>
+        <p>Sua solicitação foi atualizada para: <strong style="color:${cor};">${esc(label)}</strong></p>
+        <table style="border-collapse:collapse; width:100%; font-size:14px; margin-top:12px;">
+          <tr><td style="padding:6px 0; color:#666;">Item(ns)</td><td style="padding:6px 0;"><strong>${esc(sol.item)}</strong></td></tr>
+          <tr><td style="padding:6px 0; color:#666;">Quantidade</td><td style="padding:6px 0;">${esc(sol.quantidade)}</td></tr>
+        </table>
+        <p style="color:#999; font-size:12px; margin-top:24px;">Qualquer dúvida, entre em contato com o setor de suprimentos.</p>
+      </div>
+    `;
+    await enviarEmail({ to: sol.email, subject: `[SUPRIMENTOS] Sua solicitação foi ${label}`, html });
+  }
+
   async function atualizarStatus(id, status){
     const sol = state.solicitacoes.find(s=>s.id===id);
     const { error } = await supabaseClient.rpc('admin_atualizar_status_solicitacao', {
@@ -195,7 +235,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     state.produtos = await carregarProdutos();
     state.solicitacoes = await carregarSolicitacoes();
     await addLog('STATUS_SOLICITACAO', `Pedido de ${sol ? sol.nome : id} alterado para ${status.toUpperCase()}.`);
-    showToast(`Solicitação${sol ? ' de ' + sol.nome : ''} marcada como ${status.toUpperCase()}.`);
+    showToast(`Solicitação${sol ? ' de ' + sol.nome : ''} marcada como ${status.toUpperCase()}. Notificando por e-mail...`);
+    const { error: erroEmail } = await notificarColaborador(sol, status) || {};
+    if(erroEmail){ showToast('Status atualizado, mas o e-mail de notificação falhou.'); }
   }
 
   let realtimeSubscribed = false;
