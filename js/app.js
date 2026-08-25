@@ -769,21 +769,38 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 
   function renderSolicitacoes(content){
+    const ABAS_STATUS = [
+      { valor: 'pendente',  label: 'Pendentes' },
+      { valor: 'aprovado',  label: 'Aprovados' },
+      { valor: 'entregue',  label: 'Entregues' },
+      { valor: 'rejeitado', label: 'Reprovados' },
+      { valor: 'cancelado', label: 'Cancelados' },
+    ];
+    // Aba padrão: pendentes (o que o admin mais precisa ver primeiro).
+    if(!ABAS_STATUS.some(a => a.valor === state.filtroStatus)){
+      state.filtroStatus = 'pendente';
+    }
+
+    const contagens = Object.fromEntries(ABAS_STATUS.map(a => [a.valor, state.solicitacoes.filter(s => s.status === a.valor).length]));
+
     const panel = elFrag(`
       <div class="panel">
         <div class="panel-head">
           <h3>Fila de Pedidos e Requisições</h3>
           <button class="secondary" id="export-solicitacoes">📥 Exportar Relatório CSV</button>
         </div>
+
+        <div class="status-tabs" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:16px;">
+          ${ABAS_STATUS.map(a => `
+            <button class="status-tab-btn ${state.filtroStatus===a.valor?'active':''}" data-status="${a.valor}"
+              style="padding:8px 16px; border-radius:8px; border:1px solid ${state.filtroStatus===a.valor?'var(--amber)':'var(--border)'}; background:${state.filtroStatus===a.valor?'rgba(255,127,17,0.1)':'transparent'}; color:${state.filtroStatus===a.valor?'var(--amber)':'var(--text)'}; font-size:13px; font-weight:600; cursor:pointer;">
+              ${a.label} <span style="opacity:0.7;">(${contagens[a.valor]})</span>
+            </button>
+          `).join('')}
+        </div>
+
         <div class="row-controls">
-          <input id="busca-sol" placeholder="🔍 Pesquisar por colaborador, email ou item..." style="max-width:300px;" value="${state.buscaSolicitacao}">
-          <select id="filtro-status" style="max-width:180px;">
-            <option value="todos" ${state.filtroStatus==='todos'?'selected':''}>Todos os Status</option>
-            <option value="pendente" ${state.filtroStatus==='pendente'?'selected':''}>Apenas Pendentes</option>
-            <option value="aprovado" ${state.filtroStatus==='aprovado'?'selected':''}>Aprovados</option>
-            <option value="rejeitado" ${state.filtroStatus==='rejeitado'?'selected':''}>Rejeitados</option>
-            <option value="entregue" ${state.filtroStatus==='entregue'?'selected':''}>Entregues</option>
-          </select>
+          <input id="busca-sol" placeholder="🔍 Pesquisar por colaborador, email ou item..." style="max-width:300px;" value="${esc(state.buscaSolicitacao)}">
           <select id="ordenacao" style="max-width:180px;">
             <option value="recentes" ${state.ordenacao==='recentes'?'selected':''}>Mais Recentes</option>
             <option value="urgencia" ${state.ordenacao==='urgencia'?'selected':''}>Maior Urgência</option>
@@ -798,9 +815,22 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       exportarCSV(state.solicitacoes.map(s => ({ Solicitante: s.nome, Email: s.email, Setor: s.setor, Material: s.item, Quantidade: s.quantidade, Endereco: s.endereco, Urgencia: s.urgencia, Status: s.status, Data: s.dataCriacao })), 'Relatorio_Solicitacoes');
     };
 
+    panel.querySelectorAll('.status-tab-btn').forEach(btn => {
+      btn.onclick = () => { state.filtroStatus = btn.dataset.status; render(); };
+    });
+
     panel.querySelector('#busca-sol').oninput = (e)=>{ state.buscaSolicitacao=e.target.value; renderTable(); };
-    panel.querySelector('#filtro-status').onchange = (e)=>{ state.filtroStatus=e.target.value; renderTable(); };
     panel.querySelector('#ordenacao').onchange = (e)=>{ state.ordenacao=e.target.value; renderTable(); };
+
+    // Define quais ações fazem sentido a partir de cada status atual.
+    function acoesDisponiveis(status){
+      if(status==='pendente')  return [{to:'aprovado', label:'Aprovar', cor:'var(--ok)'}, {to:'rejeitado', label:'Rejeitar', cor:'var(--danger)'}];
+      if(status==='aprovado')  return [{to:'entregue', label:'Marcar Entregue', cor:'var(--steel)'}, {to:'rejeitado', label:'Rejeitar', cor:'var(--danger)'}];
+      if(status==='rejeitado') return [{to:'pendente', label:'Reabrir Pedido', cor:'var(--amber)'}];
+      if(status==='entregue')  return [];
+      if(status==='cancelado') return [];
+      return [];
+    }
 
     function renderTable(){
       const box = panel.querySelector('#sol-table');
@@ -808,28 +838,24 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       let list = state.solicitacoes.filter(s=>{
         const q = state.buscaSolicitacao.toLowerCase();
         const matchBusca = !q || s.nome.toLowerCase().includes(q) || s.email.toLowerCase().includes(q) || s.item.toLowerCase().includes(q) || (s.setor||'').toLowerCase().includes(q);
-        const matchStatus = state.filtroStatus==='todos' || s.status===state.filtroStatus;
-        return matchBusca && matchStatus;
+        return matchBusca && s.status === state.filtroStatus;
       });
       list = [...list].sort((a,b)=> state.ordenacao==='urgencia' ? urgOrder[a.urgencia]-urgOrder[b.urgencia] : new Date(b.dataCriacao)-new Date(a.dataCriacao));
 
-      if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📝</div>Nenhuma solicitação encontrada.</div>`; return; }
+      if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📝</div>Nenhuma solicitação nesse status.</div>`; return; }
       box.innerHTML = `
         <table>
-          <thead><tr><th>Colaborador</th><th>Material / Descrição</th><th>Qtd</th><th>Urgência</th><th>Status</th><th>Data</th><th>Ações / Gestão</th></tr></thead>
+          <thead><tr><th>Colaborador</th><th>Material / Descrição</th><th>Qtd</th><th>Urgência</th><th>Data</th><th>Ações / Gestão</th></tr></thead>
           <tbody>${list.map(s=>`
             <tr>
               <td><strong>${esc(s.nome)}</strong><br><span class="email-cell">${esc(s.email)}</span></td>
               <td>${esc(s.item)}</td>
               <td class="mono" style="font-weight:bold;">${s.quantidade}</td>
               <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
-              <td><span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span></td>
               <td class="dim mono" style="font-size:11px;">${fmtDate(s.dataCriacao)}</td>
               <td>
                 <button class="icon-btn" data-act="detalhes" data-id="${s.id}">Ver</button>
-                <button class="icon-btn" style="color:var(--ok); border-color:rgba(16,185,129,0.3);" data-act="aprovado" data-id="${s.id}">Aprovar</button>
-                <button class="icon-btn danger" data-act="rejeitado" data-id="${s.id}">Rejeitar</button>
-                <button class="icon-btn" style="color:var(--steel); border-color:rgba(14,165,233,0.3);" data-act="entregue" data-id="${s.id}">Entregar</button>
+                ${acoesDisponiveis(s.status).map(a => `<button class="icon-btn" style="color:${a.cor}; border-color:${a.cor};" data-act="${a.to}" data-id="${s.id}">${a.label}</button>`).join('')}
               </td>
             </tr>
           `).join('')}</tbody>
