@@ -72,6 +72,41 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     showToast(`Relatório ${nomeArquivo}.csv baixado com sucesso!`);
   }
 
+  // Exporta uma lista de compras com todos os itens em ruptura (zerados ou
+  // abaixo do estoque mínimo), já sugerindo quanto comprar de cada um e o
+  // custo estimado da reposição — pronta para mandar pro fornecedor/compras.
+  function exportarListaCompras(){
+    const emRuptura = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5));
+
+    if(emRuptura.length === 0){ showToast('Nenhum item em ruptura no momento — nada para exportar.'); return; }
+
+    let custoTotalGeral = 0;
+    const linhas = emRuptura
+      .sort((a,b) => a.estoque - b.estoque) // mais crítico (mais perto/abaixo de zero) primeiro
+      .map(p => {
+        // Sugere repor até o dobro do mínimo, garantindo uma folga além de só "zerar a ruptura".
+        const qtdSugerida = Math.max((Number(p.quantidadeMinima||5) * 2) - Number(p.estoque||0), 1);
+        const custoEstimado = qtdSugerida * Number(p.preco||0);
+        custoTotalGeral += custoEstimado;
+        return {
+          SKU: p.sku,
+          Material: p.nome,
+          Categoria: p.categoria,
+          Estoque_Atual: p.estoque,
+          Estoque_Minimo: p.quantidadeMinima,
+          Situacao: p.estoque <= 0 ? 'ZERADO' : 'ABAIXO DO MÍNIMO',
+          Quantidade_Sugerida_Compra: qtdSugerida,
+          Unidade: p.unidade,
+          Preco_Unitario: p.preco.toFixed(2).replace('.', ','),
+          Custo_Estimado: custoEstimado.toFixed(2).replace('.', ','),
+          Fornecedor: p.fornecedor || '—'
+        };
+      });
+
+    exportarCSV(linhas, 'Lista_de_Compras_Reposicao');
+    showToast(`Lista exportada: ${emRuptura.length} item(ns) em ruptura, custo estimado total ${fmtMoney(custoTotalGeral)}.`);
+  }
+
   // ==========================================================================
   // Camada de dados: tudo agora vem do Supabase (nada mais em localStorage/window.storage).
   // ==========================================================================
@@ -686,7 +721,10 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         <div class="panel">
           <div class="panel-head">
             <h3>Ruptura de Estoque (Abaixo do Mínimo)</h3>
-            ${abaixoMinimo.length > 0 ? `<button class="secondary" id="btn-ver-alerta-detalhado">Ver Lista de Reposição</button>` : ''}
+            <div style="display:flex; gap:8px;">
+              ${abaixoMinimo.length > 0 ? `<button class="secondary" id="btn-exportar-compras">📥 Exportar Lista de Compras</button>` : ''}
+              ${abaixoMinimo.length > 0 ? `<button class="secondary" id="btn-ver-alerta-detalhado">Ver Lista de Reposição</button>` : ''}
+            </div>
           </div>
           ${abaixoMinimo.length===0 ? `<div class="empty-state"><div class="glyph">🛡️</div>Estoque saudável. Todos os itens possuem estoque acima do mínimo.</div>` : `
             <table>
@@ -718,6 +756,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const btnDetalhes = dashboardEl.querySelector('#btn-ver-alerta-detalhado');
     if(btnDetalhes) btnDetalhes.onclick = () => { state.modal = { type: 'alerta-reposicao' }; render(); };
+
+    const btnExportarCompras = dashboardEl.querySelector('#btn-exportar-compras');
+    if(btnExportarCompras) btnExportarCompras.onclick = exportarListaCompras;
 
     dashboardEl.querySelectorAll('[data-repor]').forEach(b => {
       b.onclick = () => {
@@ -1019,6 +1060,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           </table>
         `}
         <div class="modal-actions">
+          ${abaixo.length > 0 ? `<button class="secondary" id="modal-exportar-compras">📥 Exportar Lista de Compras</button>` : ''}
           <button class="primary" id="modal-cancel">Fechar</button>
         </div>
       `;
@@ -1141,6 +1183,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         render();
       };
     }
+
+    const exportarComprasBtn = overlay.querySelector('#modal-exportar-compras');
+    if(exportarComprasBtn) exportarComprasBtn.onclick = exportarListaCompras;
 
     app.appendChild(overlay);
   }
