@@ -29,6 +29,16 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   function fmtDate(iso){ const d=new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
   function fmtMoney(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+
+  // Mostra os materiais de um pedido um por linha (nome ×quantidade), em vez do
+  // texto corrido salvo no campo "item". Cai de volta pro texto corrido quando
+  // não há itens de catálogo vinculados (caso de item personalizado).
+  function formatarMateriaisCompacto(s){
+    if(s.itens && s.itens.length > 0){
+      return s.itens.map(it => `${esc(it.nome)} <span class="dim mono">×${it.quantidade}</span>`).join('<br>');
+    }
+    return esc(s.item);
+  }
   function elFrag(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
 
   // Escapa texto antes de inserir no HTML. Este painel exibe dados enviados por
@@ -113,7 +123,31 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   async function carregarSolicitacoes(){
     const { data, error } = await supabaseClient.from('solicitacoes').select('*').order('data_criacao', { ascending: false });
     if(error){ console.error(error); return []; }
-    return (data || []).map(mapSolicitacao);
+    const solicitacoes = (data || []).map(mapSolicitacao);
+
+    const ids = solicitacoes.map(s => s.id);
+    if(ids.length > 0){
+      const { data: itensData, error: itensError } = await supabaseClient
+        .from('solicitacao_itens')
+        .select('solicitacao_id, quantidade, produtos ( nome, sku, categoria )')
+        .in('solicitacao_id', ids);
+
+      if(!itensError && itensData){
+        const porSolicitacao = {};
+        itensData.forEach(row => {
+          if(!porSolicitacao[row.solicitacao_id]) porSolicitacao[row.solicitacao_id] = [];
+          porSolicitacao[row.solicitacao_id].push({
+            nome: row.produtos ? row.produtos.nome : 'Produto removido',
+            sku: row.produtos ? row.produtos.sku : '—',
+            categoria: row.produtos ? row.produtos.categoria : '',
+            quantidade: row.quantidade
+          });
+        });
+        solicitacoes.forEach(s => { s.itens = porSolicitacao[s.id] || []; });
+      }
+    }
+
+    return solicitacoes;
   }
 
   async function carregarLogs(){
@@ -620,7 +654,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 <tbody>${pendentes.slice(0,5).map(s=>`
                   <tr>
                     <td style="font-weight:500;">${esc(s.nome)}</td>
-                    <td>${esc(s.item)}</td>
+                    <td>${formatarMateriaisCompacto(s)}</td>
                     <td class="mono">${s.quantidade}</td>
                     <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
                     <td class="dim mono">${fmtDate(s.dataCriacao)}</td>
@@ -849,7 +883,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <tbody>${list.map(s=>`
             <tr>
               <td><strong>${esc(s.nome)}</strong><br><span class="email-cell">${esc(s.email)}</span></td>
-              <td>${esc(s.item)}</td>
+              <td>${formatarMateriaisCompacto(s)}</td>
               <td class="mono" style="font-weight:bold;">${s.quantidade}</td>
               <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
               <td class="dim mono" style="font-size:11px;">${fmtDate(s.dataCriacao)}</td>
@@ -1001,29 +1035,68 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       `;
     } else if(m.type==='detalhe-solicitacao'){
       const s = m.solicitacao;
+      const itens = s.itens || [];
       const mailtoLink = buildMailto(s.email, `[SUPRIMENTOS] Atualização sobre sua solicitação (${s.item})`, `Olá ${s.nome},\n\nSua solicitação do item "${s.item}" (Quantidade: ${s.quantidade}) encontra-se com status: ${s.status.toUpperCase()}.\n\nAtenciosamente,\nAlmoxarifado BackOffice`);
+
+      const secaoTitulo = (texto) => `<div style="font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin:20px 0 10px; padding-top:16px; border-top:1px solid var(--border);">${texto}</div>`;
+
       inner = `
-        <h3>Detalhes da Requisição</h3>
-        <p class="modal-sub">Informações completas do pedido enviado pelo colaborador.</p>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <h3 style="margin:0;">Detalhes da Requisição</h3>
+          <div style="display:flex; gap:8px;">
+            <span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span>
+            <span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span>
+          </div>
+        </div>
+        <p class="modal-sub">Pedido de ${fmtDate(s.dataCriacao)}</p>
+
+        <div style="margin:0 0 4px; font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim);">Solicitante</div>
         <dl class="detail-grid">
-          <dt>Solicitante</dt><dd>${esc(s.nome)}</dd>
-          <dt>E-mail</dt><dd><a href="${esc(mailtoLink)}" style="color:var(--steel); text-decoration:underline;">${esc(s.email)} ✉️ (Enviar E-mail)</a></dd>
+          <dt>Nome</dt><dd>${esc(s.nome)}</dd>
+          <dt>E-mail</dt><dd><a href="${esc(mailtoLink)}" style="color:var(--steel); text-decoration:underline;">${esc(s.email)} ✉️</a></dd>
           <dt>Matrícula</dt><dd>${esc(s.matricula) || '—'}</dd>
           <dt>Setor / Centro</dt><dd>${esc(s.setor) || '—'} (${esc(s.centroCusto) || '—'})</dd>
-          <dt>Material</dt><dd style="font-weight:600; color:var(--amber);">${esc(s.item)}</dd>
-          <dt>Quantidade</dt><dd class="mono">${s.quantidade}</dd>
-          <dt>Urgência</dt><dd><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></dd>
-          <dt>Status Atual</dt><dd><span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span></dd>
-          <dt>Data do Pedido</dt><dd class="mono">${fmtDate(s.dataCriacao)}</dd>
         </dl>
-        <div class="field" style="margin-top:16px;">
-          <label>Endereço de Entrega:</label>
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${esc(s.endereco) || 'Não informado.'}</div>
-        </div>
-        <div class="field" style="margin-top:12px;">
-          <label>Observações:</label>
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${esc(s.motivo) || 'Nenhuma observação informada.'}</div>
-        </div>
+
+        ${secaoTitulo('Materiais Solicitados')}
+        ${itens.length > 0 ? `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Material</th>
+                <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">SKU</th>
+                <th style="text-align:right; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Qtd.</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itens.map(it => `
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${esc(it.nome)}${it.categoria ? `<br><span class="dim" style="font-size:11px;">${esc(it.categoria)}</span>` : ''}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);" class="mono dim">${esc(it.sku)}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border); text-align:right; font-weight:700;" class="mono">${it.quantidade}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2" style="padding:8px; text-align:right; color:var(--text-dim); font-family:var(--font-mono); font-size:11px;">TOTAL</td>
+                <td style="padding:8px; text-align:right; font-weight:700; color:var(--amber);" class="mono">${s.quantidade}</td>
+              </tr>
+            </tfoot>
+          </table>
+        ` : `
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px;">
+            <strong style="color:var(--amber);">${esc(s.item)}</strong>
+            <div class="dim" style="font-size:11.5px; margin-top:2px;">Item personalizado (fora do catálogo) · Quantidade: ${s.quantidade}</div>
+          </div>
+        `}
+
+        ${secaoTitulo('Endereço de Entrega')}
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${esc(s.endereco) || 'Não informado.'}</div>
+
+        ${secaoTitulo('Observações')}
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${esc(s.motivo) || 'Nenhuma observação informada.'}</div>
+
         <div class="modal-actions">
           <button class="primary" id="modal-cancel">Fechar</button>
         </div>
