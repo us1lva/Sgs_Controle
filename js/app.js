@@ -80,13 +80,88 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     showToast(`Relatório ${nomeArquivo}.csv baixado com sucesso!`);
   }
 
+  // Gera uma planilha .xlsx de verdade: cabeçalho colorido em negrito, bordas em
+  // toda a tabela, linhas zebradas e coluna de destaque quando indicado. Usada
+  // nas listas de compra, que precisam ser lidas/impressas por outras pessoas
+  // (fornecedor, financeiro), não só abertas no navegador.
+  async function exportarExcelFormatado(titulo, colunas, linhas, nomeArquivo){
+    if(!linhas || linhas.length === 0){ showToast('Nada para exportar no momento.'); return; }
+    if(typeof ExcelJS === 'undefined'){ showToast('Biblioteca de planilha não carregada — recarregue a página e tente de novo.'); return; }
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Sistema de Controle de Estoque';
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet(titulo, { views: [{ state: 'frozen', ySplit: 1 }] });
+    sheet.columns = colunas.map(c => ({ header: c.header, key: c.key, width: c.width || 18 }));
+
+    linhas.forEach(linha => sheet.addRow(linha));
+
+    colunas.forEach(c => { if(c.numFmt) sheet.getColumn(c.key).numFmt = c.numFmt; });
+
+    const headerRow = sheet.getRow(1);
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5597' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+    });
+    headerRow.height = 24;
+
+    sheet.eachRow((row, rowNumber) => {
+      if(rowNumber === 1) return;
+      const linhaOriginal = linhas[rowNumber - 2];
+      const destaque = linhaOriginal && linhaOriginal._destaque;
+      row.eachCell(cell => {
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFD9D9D9' } }, left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+          bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } }, right: { style: 'thin', color: { argb: 'FFD9D9D9' } }
+        };
+        if(destaque){ cell.font = { color: { argb: 'FFCC0000' }, bold: true }; }
+      });
+      if(!destaque && rowNumber % 2 === 0){
+        row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } }; });
+      } else if(destaque){
+        row.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE8E6' } }; });
+      }
+      row.height = 20;
+    });
+
+    const ultimaColuna = String.fromCharCode(64 + colunas.length);
+    sheet.autoFilter = { from: 'A1', to: `${ultimaColuna}${linhas.length + 1}` };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/octet-stream' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showToast(`Planilha ${nomeArquivo}.xlsx exportada com sucesso!`);
+  }
+
   // Exporta uma lista de compras com todos os itens em ruptura (zerados ou
   // abaixo do estoque mínimo), já sugerindo quanto comprar de cada um e o
   // custo estimado da reposição — pronta para mandar pro fornecedor/compras.
-  function exportarListaCompras(){
+  async function exportarListaCompras(){
     const emRuptura = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5));
 
     if(emRuptura.length === 0){ showToast('Nenhum item em ruptura no momento — nada para exportar.'); return; }
+
+    const colunas = [
+      { header: 'SKU',              key: 'sku',            width: 14 },
+      { header: 'Material',         key: 'material',       width: 32 },
+      { header: 'Categoria',        key: 'categoria',      width: 16 },
+      { header: 'Estoque Atual',    key: 'estoqueAtual',   width: 14 },
+      { header: 'Estoque Mínimo',   key: 'estoqueMinimo',  width: 14 },
+      { header: 'Situação',         key: 'situacao',       width: 18 },
+      { header: 'Qtd. Sugerida',    key: 'qtdSugerida',    width: 14 },
+      { header: 'Unidade',          key: 'unidade',        width: 10 },
+      { header: 'Preço Unitário',   key: 'precoUnitario',  width: 15, numFmt: '"R$" #,##0.00' },
+      { header: 'Custo Estimado',   key: 'custoEstimado',  width: 16, numFmt: '"R$" #,##0.00' },
+      { header: 'Fornecedor',       key: 'fornecedor',     width: 24 },
+    ];
 
     let custoTotalGeral = 0;
     const linhas = emRuptura
@@ -96,29 +171,36 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         const qtdSugerida = Math.max((Number(p.quantidadeMinima||5) * 2) - Number(p.estoque||0), 1);
         const custoEstimado = qtdSugerida * Number(p.preco||0);
         custoTotalGeral += custoEstimado;
+        const zerado = p.estoque <= 0;
         return {
-          SKU: p.sku,
-          Material: p.nome,
-          Categoria: p.categoria,
-          Estoque_Atual: p.estoque,
-          Estoque_Minimo: p.quantidadeMinima,
-          Situacao: p.estoque <= 0 ? 'ZERADO' : 'ABAIXO DO MÍNIMO',
-          Quantidade_Sugerida_Compra: qtdSugerida,
-          Unidade: p.unidade,
-          Preco_Unitario: p.preco.toFixed(2).replace('.', ','),
-          Custo_Estimado: custoEstimado.toFixed(2).replace('.', ','),
-          Fornecedor: p.fornecedor || '—'
+          sku: p.sku, material: p.nome, categoria: p.categoria,
+          estoqueAtual: p.estoque, estoqueMinimo: p.quantidadeMinima,
+          situacao: zerado ? 'ZERADO' : 'ABAIXO DO MÍNIMO',
+          qtdSugerida, unidade: p.unidade,
+          precoUnitario: Number(p.preco || 0), custoEstimado,
+          fornecedor: p.fornecedor || '—',
+          _destaque: zerado
         };
       });
 
-    exportarCSV(linhas, 'Lista_de_Compras_Reposicao');
+    await exportarExcelFormatado('Lista de Compras', colunas, linhas, 'Lista_de_Compras_Reposicao');
     showToast(`Lista exportada: ${emRuptura.length} item(ns) em ruptura, custo estimado total ${fmtMoney(custoTotalGeral)}.`);
   }
 
   // Exporta a lista de itens sem estoque que colaboradores JÁ pediram e estão
   // aguardando (demanda real e concreta, diferente da lista de ruptura preventiva).
-  function exportarComprasUrgentes(itensUrgentes){
+  async function exportarComprasUrgentes(itensUrgentes){
     if(!itensUrgentes || itensUrgentes.length === 0){ showToast('Nenhum item com pedido pendente sem estoque no momento.'); return; }
+
+    const colunas = [
+      { header: 'SKU',                       key: 'sku',               width: 14 },
+      { header: 'Material',                  key: 'material',          width: 32 },
+      { header: 'Qtd. Pedida (Pendente)',     key: 'qtdPendente',       width: 18 },
+      { header: 'Pedidos Aguardando',         key: 'pedidosAguardando', width: 16 },
+      { header: 'Preço Unitário',            key: 'precoUnitario',     width: 15, numFmt: '"R$" #,##0.00' },
+      { header: 'Custo Estimado',            key: 'custoEstimado',     width: 16, numFmt: '"R$" #,##0.00' },
+      { header: 'Fornecedor',                key: 'fornecedor',        width: 24 },
+    ];
 
     let custoTotal = 0;
     const linhas = itensUrgentes.map(it => {
@@ -127,17 +209,15 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       const custo = preco * it.quantidade;
       custoTotal += custo;
       return {
-        SKU: produto ? produto.sku : '—',
-        Material: it.nome,
-        Quantidade_Pedida_Pendente: it.quantidade,
-        Pedidos_Aguardando: it.pedidos,
-        Preco_Unitario: preco.toFixed(2).replace('.', ','),
-        Custo_Estimado: custo.toFixed(2).replace('.', ','),
-        Fornecedor: produto ? (produto.fornecedor || '—') : '—'
+        sku: produto ? produto.sku : '—', material: it.nome,
+        qtdPendente: it.quantidade, pedidosAguardando: it.pedidos,
+        precoUnitario: preco, custoEstimado: custo,
+        fornecedor: produto ? (produto.fornecedor || '—') : '—',
+        _destaque: true
       };
     });
 
-    exportarCSV(linhas, 'Compra_Urgente_Demanda_Real');
+    await exportarExcelFormatado('Compra Urgente', colunas, linhas, 'Compra_Urgente_Demanda_Real');
     showToast(`Lista exportada: ${itensUrgentes.length} item(ns) com colaboradores aguardando, custo estimado ${fmtMoney(custoTotal)}.`);
   }
 
