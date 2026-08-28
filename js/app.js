@@ -32,10 +32,18 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // Mostra os materiais de um pedido um por linha (nome ×quantidade), em vez do
   // texto corrido salvo no campo "item". Cai de volta pro texto corrido quando
-  // não há itens de catálogo vinculados (caso de item personalizado).
+  // não há itens de catálogo vinculados (caso de item personalizado). Itens sem
+  // estoque no momento do pedido aparecem destacados em vermelho, com aviso de
+  // compra urgente.
   function formatarMateriaisCompacto(s){
     if(s.itens && s.itens.length > 0){
-      return s.itens.map(it => `${esc(it.nome)} <span class="dim mono">×${it.quantidade}</span>`).join('<br>');
+      return s.itens.map(it => {
+        const semEstoque = it.disponivel === false;
+        const texto = `${esc(it.nome)} <span class="dim mono">×${it.quantidade}</span>`;
+        return semEstoque
+          ? `<span style="color:var(--danger); font-weight:600;">🔴 ${texto} — sem estoque</span>`
+          : texto;
+      }).join('<br>');
     }
     return esc(s.item);
   }
@@ -107,6 +115,32 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     showToast(`Lista exportada: ${emRuptura.length} item(ns) em ruptura, custo estimado total ${fmtMoney(custoTotalGeral)}.`);
   }
 
+  // Exporta a lista de itens sem estoque que colaboradores JÁ pediram e estão
+  // aguardando (demanda real e concreta, diferente da lista de ruptura preventiva).
+  function exportarComprasUrgentes(itensUrgentes){
+    if(!itensUrgentes || itensUrgentes.length === 0){ showToast('Nenhum item com pedido pendente sem estoque no momento.'); return; }
+
+    let custoTotal = 0;
+    const linhas = itensUrgentes.map(it => {
+      const produto = state.produtos.find(p => p.id === it.produtoId);
+      const preco = produto ? Number(produto.preco||0) : 0;
+      const custo = preco * it.quantidade;
+      custoTotal += custo;
+      return {
+        SKU: produto ? produto.sku : '—',
+        Material: it.nome,
+        Quantidade_Pedida_Pendente: it.quantidade,
+        Pedidos_Aguardando: it.pedidos,
+        Preco_Unitario: preco.toFixed(2).replace('.', ','),
+        Custo_Estimado: custo.toFixed(2).replace('.', ','),
+        Fornecedor: produto ? (produto.fornecedor || '—') : '—'
+      };
+    });
+
+    exportarCSV(linhas, 'Compra_Urgente_Demanda_Real');
+    showToast(`Lista exportada: ${itensUrgentes.length} item(ns) com colaboradores aguardando, custo estimado ${fmtMoney(custoTotal)}.`);
+  }
+
   // ==========================================================================
   // Camada de dados: tudo agora vem do Supabase (nada mais em localStorage/window.storage).
   // ==========================================================================
@@ -164,7 +198,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     if(ids.length > 0){
       const { data: itensData, error: itensError } = await supabaseClient
         .from('solicitacao_itens')
-        .select('solicitacao_id, quantidade, produtos ( nome, sku, categoria )')
+        .select('solicitacao_id, produto_id, quantidade, disponivel, produtos ( nome, sku, categoria )')
         .in('solicitacao_id', ids);
 
       if(!itensError && itensData){
@@ -172,10 +206,12 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         itensData.forEach(row => {
           if(!porSolicitacao[row.solicitacao_id]) porSolicitacao[row.solicitacao_id] = [];
           porSolicitacao[row.solicitacao_id].push({
+            produtoId: row.produto_id,
             nome: row.produtos ? row.produtos.nome : 'Produto removido',
             sku: row.produtos ? row.produtos.sku : '—',
             categoria: row.produtos ? row.produtos.categoria : '',
-            quantidade: row.quantidade
+            quantidade: row.quantidade,
+            disponivel: row.disponivel
           });
         });
         solicitacoes.forEach(s => { s.itens = porSolicitacao[s.id] || []; });
@@ -649,6 +685,21 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const pendentes = state.solicitacoes.filter(s=>s.status==='pendente');
     const valorTotal = state.produtos.reduce((a,p)=>a + Number(p.estoque||0) * Number(p.preco||0),0);
 
+    // Itens sem estoque pedidos por colaboradores em pedidos ainda ativos
+    // (pendente/aprovado) — é demanda REAL e concreta, não só "abaixo do mínimo".
+    const itensUrgentesMap = {};
+    state.solicitacoes
+      .filter(s => s.status === 'pendente' || s.status === 'aprovado')
+      .forEach(s => {
+        (s.itens || []).filter(it => it.disponivel === false).forEach(it => {
+          const key = it.produtoId || it.nome;
+          if(!itensUrgentesMap[key]) itensUrgentesMap[key] = { produtoId: it.produtoId, nome: it.nome, sku: it.sku, quantidade: 0, pedidos: 0 };
+          itensUrgentesMap[key].quantidade += it.quantidade;
+          itensUrgentesMap[key].pedidos += 1;
+        });
+      });
+    const itensUrgentes = Object.values(itensUrgentesMap).sort((a,b) => b.quantidade - a.quantidade);
+
     const categorias = {};
     state.produtos.forEach(p => {
       const val = Number(p.estoque||0) * Number(p.preco||0);
@@ -662,6 +713,11 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             <div class="label">SKUs no Catálogo</div>
             <div class="value">${state.produtos.length}</div>
             <span class="click-hint">Clique para ver inventário →</span>
+          </div>
+          <div class="stat-card ${itensUrgentes.length ? 'danger' : ''}" data-card="urgente">
+            <div class="label">🔴 Compra Urgente (sem estoque)</div>
+            <div class="value">${itensUrgentes.length}</div>
+            <span class="click-hint">Colaboradores aguardando →</span>
           </div>
           <div class="stat-card ${abaixoMinimo.length ? 'danger' : ''}" data-card="reposicao">
             <div class="label">Alerta de Reposição</div>
@@ -679,6 +735,28 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             <span class="click-hint">Clique para ver detalhes →</span>
           </div>
         </div>
+
+        ${itensUrgentes.length > 0 ? `
+          <div class="panel" style="border-color:var(--danger);">
+            <div class="panel-head">
+              <h3 style="color:var(--danger);">🔴 Compra Urgente — Colaboradores Aguardando</h3>
+              <button class="secondary" id="btn-exportar-urgente" style="border-color:var(--danger); color:var(--danger);">📥 Exportar Lista de Compra Urgente</button>
+            </div>
+            <p class="dim" style="font-size:12.5px; margin:-8px 0 14px;">Estes itens foram pedidos por colaboradores mas não têm estoque agora. Diferente do "Alerta de Reposição" (preventivo), aqui já existe gente esperando.</p>
+            <table>
+              <thead><tr><th>Material</th><th>SKU</th><th>Qtd. Pendente</th><th>Pedidos Aguardando</th><th>Ação</th></tr></thead>
+              <tbody>${itensUrgentes.map(it=>`
+                <tr>
+                  <td style="font-weight:600; color:var(--danger);">${esc(it.nome)}</td>
+                  <td class="mono dim">${esc(it.sku)}</td>
+                  <td class="mono" style="font-weight:700; color:var(--danger);">${it.quantidade}</td>
+                  <td class="mono dim">${it.pedidos}</td>
+                  <td>${it.produtoId ? `<button class="icon-btn" data-repor="${it.produtoId}">Repor / Editar</button>` : ''}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
 
         <div style="display:grid; grid-template-columns: 2fr 1fr; gap:20px; flex-wrap:wrap;">
           <div class="panel">
@@ -748,6 +826,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       card.onclick = () => {
         const type = card.dataset.card;
         if(type === 'reposicao'){ state.modal = { type: 'alerta-reposicao' }; render(); }
+        else if(type === 'urgente'){ state.tab = 'solicitacoes'; render(); }
         else if(type === 'pendentes'){ state.tab = 'solicitacoes'; state.filtroStatus = 'pendente'; render(); }
         else if(type === 'total'){ state.tab = 'produtos'; render(); }
         else if(type === 'capital'){ state.modal = { type: 'resumo-capital' }; render(); }
@@ -759,6 +838,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const btnExportarCompras = dashboardEl.querySelector('#btn-exportar-compras');
     if(btnExportarCompras) btnExportarCompras.onclick = exportarListaCompras;
+
+    const btnExportarUrgente = dashboardEl.querySelector('#btn-exportar-urgente');
+    if(btnExportarUrgente) btnExportarUrgente.onclick = () => exportarComprasUrgentes(itensUrgentes);
 
     dashboardEl.querySelectorAll('[data-repor]').forEach(b => {
       b.onclick = () => {
@@ -1101,6 +1183,11 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         </dl>
 
         ${secaoTitulo('Materiais Solicitados')}
+        ${(itens.some(it => it.disponivel === false)) ? `
+          <div style="background:rgba(255,63,0,0.1); border:1px solid var(--danger); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:var(--danger); font-weight:600;">
+            ⚠️ Este pedido tem item(ns) sem estoque no momento — compra urgente necessária.
+          </div>
+        ` : ''}
         ${itens.length > 0 ? `
           <table style="width:100%; border-collapse:collapse; font-size:13px;">
             <thead>
@@ -1108,21 +1195,30 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Material</th>
                 <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">SKU</th>
                 <th style="text-align:right; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Qtd.</th>
+                <th style="text-align:center; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Disponibilidade</th>
               </tr>
             </thead>
             <tbody>
-              ${itens.map(it => `
-                <tr>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${esc(it.nome)}${it.categoria ? `<br><span class="dim" style="font-size:11px;">${esc(it.categoria)}</span>` : ''}</td>
+              ${itens.map(it => {
+                const semEstoque = it.disponivel === false;
+                return `
+                <tr style="${semEstoque ? 'background:rgba(255,63,0,0.06);' : ''}">
+                  <td style="padding:8px; border-bottom:1px solid var(--border); ${semEstoque ? 'color:var(--danger); font-weight:600;' : ''}">${esc(it.nome)}${it.categoria ? `<br><span class="dim" style="font-size:11px;">${esc(it.categoria)}</span>` : ''}</td>
                   <td style="padding:8px; border-bottom:1px solid var(--border);" class="mono dim">${esc(it.sku)}</td>
                   <td style="padding:8px; border-bottom:1px solid var(--border); text-align:right; font-weight:700;" class="mono">${it.quantidade}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">
+                    ${semEstoque
+                      ? `<span class="badge" style="color:var(--danger); border-color:var(--danger); background:rgba(255,63,0,0.1);">🔴 SEM ESTOQUE</span>`
+                      : `<span class="badge" style="color:var(--ok); border-color:var(--ok); background:rgba(16,185,129,0.1);">✅ Reservado</span>`}
+                  </td>
                 </tr>
-              `).join('')}
+              `;}).join('')}
             </tbody>
             <tfoot>
               <tr>
                 <td colspan="2" style="padding:8px; text-align:right; color:var(--text-dim); font-family:var(--font-mono); font-size:11px;">TOTAL</td>
                 <td style="padding:8px; text-align:right; font-weight:700; color:var(--amber);" class="mono">${s.quantidade}</td>
+                <td></td>
               </tr>
             </tfoot>
           </table>
