@@ -22,7 +22,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     theme: localStorage.getItem('app_theme') || 'dark',
     produtos: [], solicitacoes: [], logs: [], emailControle: '',
     buscaProduto: '', filtroCategoria: 'todas', buscaSolicitacao: '', filtroStatus: 'todos', ordenacao: 'recentes',
-    modal: null, toast: null,
+    modal: null, toast: null, sidebarAberta: false,
   };
 
   document.documentElement.setAttribute('data-theme', state.theme);
@@ -574,8 +574,12 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const pendentes = state.solicitacoes.filter(s=>s.status==='pendente').length;
 
+    const backdrop = elFrag(`<div class="sidebar-backdrop ${state.sidebarAberta ? 'open' : ''}"></div>`);
+    backdrop.onclick = () => { state.sidebarAberta = false; render(); };
+    app.appendChild(backdrop);
+
     const sidebar = elFrag(`
-      <div class="sidebar">
+      <div class="sidebar ${state.sidebarAberta ? 'open' : ''}">
         <div style="display:flex; align-items:center; gap:10px;">
           <svg viewBox="0 0 240 110" height="26" xmlns="http://www.w3.org/2000/svg" aria-label="SGS" style="display:block; flex-shrink:0;">
             <text x="0" y="82" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="98" letter-spacing="-3" fill="#77787B">SGS</text>
@@ -599,7 +603,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       </div>
     `);
 
-    sidebar.querySelectorAll('.nav-item[data-tab]').forEach(n=>{ n.onclick = ()=>{ state.tab=n.dataset.tab; render(); }; });
+    sidebar.querySelectorAll('.nav-item[data-tab]').forEach(n=>{
+      n.onclick = ()=>{ state.tab=n.dataset.tab; state.sidebarAberta = false; render(); };
+    });
     sidebar.querySelector('#nav-logout').onclick = logoutUser;
     app.appendChild(sidebar);
 
@@ -618,12 +624,17 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const topbar = elFrag(`
       <div class="topbar">
-        <div><h2>${title}</h2><p>${sub}</p></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button class="menu-toggle-btn" id="menu-toggle-btn" aria-label="Abrir menu">☰</button>
+          <div><h2>${title}</h2><p>${sub}</p></div>
+        </div>
         <button class="secondary" id="theme-toggle-btn" style="display:flex; align-items:center; gap:6px;">
           ${state.theme === 'dark' ? '☀️ Modo Claro' : '🌙 Modo Escuro'}
         </button>
       </div>
     `);
+
+    topbar.querySelector('#menu-toggle-btn').onclick = () => { state.sidebarAberta = true; render(); };
 
     topbar.querySelector('#theme-toggle-btn').onclick = () => {
       state.theme = state.theme === 'dark' ? 'light' : 'dark';
@@ -823,6 +834,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
               <button class="secondary" id="btn-exportar-urgente" style="border-color:var(--danger); color:var(--danger);">📥 Exportar Lista de Compra Urgente</button>
             </div>
             <p class="dim" style="font-size:12.5px; margin:-8px 0 14px;">Estes itens foram pedidos por colaboradores mas não têm estoque agora. Diferente do "Alerta de Reposição" (preventivo), aqui já existe gente esperando.</p>
+            <div class="table-scroll">
             <table>
               <thead><tr><th>Material</th><th>SKU</th><th>Qtd. Pendente</th><th>Pedidos Aguardando</th><th>Ação</th></tr></thead>
               <tbody>${itensUrgentes.map(it=>`
@@ -835,13 +847,15 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 </tr>`).join('')}
               </tbody>
             </table>
+            </div>
           </div>
         ` : ''}
 
-        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:20px; flex-wrap:wrap;">
+        <div class="dashboard-2col">
           <div class="panel">
             <div class="panel-head"><h3>Últimas Solicitações Pendentes</h3></div>
             ${pendentes.length===0 ? `<div class="empty-state"><div class="glyph">🎉</div>Zero pendências na fila de aprovação.</div>` : `
+              <div class="table-scroll">
               <table>
                 <thead><tr><th>Colaborador</th><th>Material</th><th>Qtd.</th><th>Urgência</th><th>Data</th></tr></thead>
                 <tbody>${pendentes.slice(0,5).map(s=>`
@@ -854,6 +868,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                   </tr>
                 `).join('')}</tbody>
               </table>
+              </div>
             `}
           </div>
 
@@ -885,6 +900,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             </div>
           </div>
           ${abaixoMinimo.length===0 ? `<div class="empty-state"><div class="glyph">🛡️</div>Estoque saudável. Todos os itens possuem estoque acima do mínimo.</div>` : `
+            <div class="table-scroll">
             <table>
               <thead><tr><th>Material</th><th>SKU</th><th>Estoque Atual</th><th>Estoque Mínimo</th><th>Ação</th></tr></thead>
               <tbody>${abaixoMinimo.map(p=>`
@@ -897,6 +913,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 </tr>`).join('')}
               </tbody>
             </table>
+            </div>
           `}
         </div>
       </div>
@@ -975,6 +992,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
       if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📦</div>Nenhum produto encontrado com esse filtro.</div>`; return; }
       box.innerHTML = `
+        <div class="table-scroll">
         <table>
           <thead><tr><th>Material</th><th>SKU</th><th>Categoria</th><th>Estoque Atual</th><th>Mín. Exigido</th><th>Custo Unit.</th><th>Fornecedor</th><th>Ações</th></tr></thead>
           <tbody>${list.map(p=>`
@@ -993,6 +1011,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             </tr>
           `).join('')}</tbody>
         </table>
+        </div>
       `;
       box.querySelectorAll('[data-act]').forEach(btn=>{
         btn.onclick = ()=>{
@@ -1081,6 +1100,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
       if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📝</div>Nenhuma solicitação nesse status.</div>`; return; }
       box.innerHTML = `
+        <div class="table-scroll">
         <table>
           <thead><tr><th>Colaborador</th><th>Material / Descrição</th><th>Qtd</th><th>Urgência</th><th>Data</th><th>Ações / Gestão</th></tr></thead>
           <tbody>${list.map(s=>`
@@ -1097,6 +1117,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             </tr>
           `).join('')}</tbody>
         </table>
+        </div>
       `;
       box.querySelectorAll('[data-act]').forEach(btn=>{
         btn.onclick = async ()=>{
@@ -1124,6 +1145,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           <button class="secondary" id="export-logs">📥 Exportar Logs CSV</button>
         </div>
         ${state.logs.length===0 ? `<div class="empty-state"><div class="glyph">📜</div>Nenhum registro de log encontrado.</div>` : `
+          <div class="table-scroll">
           <table>
             <thead><tr><th>Data / Hora</th><th>Administrador</th><th>Ação Realizada</th><th>Detalhes</th></tr></thead>
             <tbody>${state.logs.map(l=>`
@@ -1135,6 +1157,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
               </tr>
             `).join('')}</tbody>
           </table>
+          </div>
         `}
       </div>
     `);
@@ -1209,6 +1232,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         <h3>Itens com Necessidade de Reposição</h3>
         <p class="modal-sub">Relação de SKUs com estoque igual ou inferior ao mínimo configurado.</p>
         ${abaixo.length === 0 ? `<div class="empty-state">Nenhum item em falta.</div>` : `
+          <div class="table-scroll">
           <table>
             <thead><tr><th>Material</th><th>SKU</th><th>Estoque</th><th>Mínimo</th></tr></thead>
             <tbody>${abaixo.map(p=>`
@@ -1220,6 +1244,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
               </tr>
             `).join('')}</tbody>
           </table>
+          </div>
         `}
         <div class="modal-actions">
           ${abaixo.length > 0 ? `<button class="secondary" id="modal-exportar-compras">📥 Exportar Lista de Compras</button>` : ''}
@@ -1269,6 +1294,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           </div>
         ` : ''}
         ${itens.length > 0 ? `
+          <div class="table-scroll">
           <table style="width:100%; border-collapse:collapse; font-size:13px;">
             <thead>
               <tr>
@@ -1302,6 +1328,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
               </tr>
             </tfoot>
           </table>
+          </div>
         ` : `
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px;">
             <strong style="color:var(--amber);">${esc(s.item)}</strong>
@@ -1368,3 +1395,12 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   loadAll();
 })();
+
+// Registro do Service Worker (PWA) — permite instalar o painel como app no
+// celular. Falha em silêncio se o navegador não suportar ou se o sw.js ainda
+// não existir no servidor.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
