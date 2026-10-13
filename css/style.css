@@ -1038,3 +1038,195 @@ body{
 .content.mx-enter{animation:fadeIn .38s ease both !important;}
 .mx-wipe{display:none !important;}
 #app.mx-quiet .chart-fill{animation:none !important;}
+
+
+/* =====================================================================
+   LAYOUT COMPACTO E CENTRALIZADO — todas as abas do SGS
+   Objetivos: reduzir rolagem da página, manter controles visíveis,
+   alinhar largura/espacamentos e organizar cada área de trabalho.
+   ===================================================================== */
+
+/* Área principal centralizada e com largura consistente em monitores grandes. */
+#app{gap:14px; padding:12px;}
+.sidebar{top:12px; height:calc(100vh - 24px);}
+.main{flex:1 1 0; width:100%; max-width:1600px; min-width:0; margin-inline:auto;}
+.topbar{width:calc(100% - 8px); max-width:1540px; margin:0 auto; top:12px; padding:12px 16px; gap:16px; border-radius:15px;}
+.topbar-main{gap:11px;}
+.topbar h2{font-size:22px;}
+.topbar p{font-size:12px; margin-top:3px; line-height:1.35;}
+.topbar-eyebrow{margin-bottom:4px; font-size:9px;}
+.topbar-actions{gap:8px;}
+.topbar-insight{min-width:128px; padding:6px 9px; gap:7px; border-radius:10px;}
+.topbar-insight-icon{width:26px; height:26px; flex-basis:26px; border-radius:8px; font-size:14px;}
+.topbar-insight-copy small{font-size:9.5px;}
+.topbar-insight-copy strong{font-size:15px;}
+.topbar .theme-btn{min-height:40px; padding:0 10px; border-radius:10px; font-size:12px;}
+.theme-symbol{width:21px; height:21px; font-size:15px;}
+.content{width:100%; max-width:1460px; margin:0 auto; padding:14px clamp(8px,1.1vw,18px) 20px;}
+.page{gap:0; min-width:0;}
+
+/* Escala tipográfica e controles uniformes. */
+.panel{padding:16px; margin-bottom:12px; border-radius:15px;}
+.panel-head{gap:8px; margin-bottom:11px;}
+.panel-head h3{font-size:17px; line-height:1.25;}
+.panel-sub{font-size:11.5px; line-height:1.4; margin-top:3px;}
+input,select,textarea{padding:8px 10px; font-size:13px; border-radius:9px;}
+button.primary,button.secondary{padding:8px 13px; font-size:12.5px; border-radius:9px;}
+button.icon-btn{padding:5px 8px; font-size:11.5px; border-radius:7px;}
+.field{margin-bottom:12px;}
+label{font-size:12px; margin-bottom:4px;}
+
+/* Tabelas mais densas. O scroll, quando necessário, fica dentro da tabela,
+   sem empurrar controles e cabeçalhos para muito longe. */
+table{font-size:12.5px;}
+th{padding:8px 9px; font-size:10.5px; letter-spacing:.045em;}
+td{padding:8px 9px; line-height:1.35;}
+.table-scroll{margin:0; max-width:100%; overflow:auto; border-radius:9px;}
+.table-scroll table{min-width:0;}
+tbody tr{height:auto;}
+.cell-main{font-size:12.5px;}
+.cell-sub{font-size:10.5px;}
+.cell-sub.mono{font-size:10px;}
+.badge{font-size:10px; padding:2px 7px 2px 6px;}
+.chip{font-size:10.5px; padding:2px 7px;}
+.toolbar{gap:8px; margin-bottom:11px;}
+.toolbar select{min-width:145px;}
+.search{flex:1 1 220px; max-width:350px;}
+.toolbar-count{font-size:10.5px; color:var(--text-dim);}
+.empty-state{padding:22px 14px; font-size:12.5px;}
+.empty-state .glyph{width:44px; height:44px; font-size:20px; margin-bottom:8px; border-width:1px;}
+
+/* DASHBOARD: cinco indicadores alinhados e seções em grade compacta. */
+.content-dashboard .stat-grid{grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin-bottom:12px;}
+.content-dashboard .stat-card{min-width:0; min-height:112px; padding:12px 13px 10px; border-radius:12px;}
+.content-dashboard .stat-card:hover{transform:translateY(-2px);}
+.content-dashboard .stat-card .label{font-size:11.5px; line-height:1.3; min-height:29px;}
+.content-dashboard .stat-card .value{font-size:31px; line-height:1.05; margin:5px 0 10px; overflow-wrap:anywhere;}
+.content-dashboard .stat-card .value.value-money{font-size:21px; margin:5px 0 10px; padding-top:0;}
+.content-dashboard .stat-card .click-hint{font-size:10px; padding-top:7px; line-height:1.25; white-space:normal;}
+.content-dashboard .stat-card:has(.click-hint)::before,
+.content-dashboard .stat-card:has(.click-hint)::after{display:none;}
+.content-dashboard .dashboard-2col{grid-template-columns:minmax(0,1.55fr) minmax(260px,1fr); gap:12px; margin-bottom:0;}
+.content-dashboard .dashboard-2col > .panel{min-width:0; margin-bottom:12px; padding:14px;}
+.content-dashboard > .page > .panel{padding:14px; margin-bottom:12px;}
+.content-dashboard .panel-head{margin-bottom:8px;}
+.content-dashboard .panel-head h3{font-size:15px;}
+.content-dashboard .chart-bar-container{gap:8px; margin-top:4px;}
+.content-dashboard .chart-row{gap:8px; font-size:11px;}
+.content-dashboard .chart-label{width:92px; font-size:10.5px;}
+.content-dashboard .chart-track{height:9px;}
+.content-dashboard .chart-val{width:35px; font-size:10px;}
+.content-dashboard .table-scroll{max-height:clamp(130px,25vh,220px);}
+.content-dashboard .panel-alert .table-scroll{max-height:clamp(95px,17vh,145px);}
+.content-dashboard .dashboard-2col + .panel .table-scroll{max-height:clamp(115px,20vh,180px);}
+.content-dashboard .panel-sub{max-width:72ch;}
+.content-dashboard .btn-group{gap:6px;}
+.content-dashboard .btn-group button{padding:7px 10px;}
+
+/* INVENTÁRIO: resumo curto, filtros em linha e tabela dentro da área disponível. */
+.content-produtos .summary-strip{grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin-bottom:12px;}
+.content-produtos .summary-item{padding:9px 13px; gap:1px; border-radius:11px;}
+.content-produtos .summary-item span{font-size:10.5px;}
+.content-produtos .summary-item strong{font-size:20px; line-height:1.2; overflow-wrap:anywhere;}
+.content-produtos .panel{padding:14px;}
+.content-produtos .panel-head{margin-bottom:10px;}
+.content-produtos .toolbar{display:grid; grid-template-columns:minmax(180px,1.5fr) minmax(135px,1fr) minmax(135px,1fr) auto; align-items:center;}
+.content-produtos .search{max-width:none; min-width:0;}
+.content-produtos .toolbar select{min-width:0; width:100%;}
+.content-produtos #produtos-table .table-scroll{max-height:calc(100vh - 335px); min-height:150px;}
+.content-produtos #produtos-table table{min-width:900px;}
+
+/* SOLICITAÇÕES: abas de status em uma faixa única em desktop. */
+.content-solicitacoes .panel{padding:14px;}
+.content-solicitacoes .panel-head{margin-bottom:9px;}
+.content-solicitacoes .seg{display:flex; width:100%; max-width:none; flex-wrap:nowrap; gap:4px; margin-bottom:11px; padding:3px; border-radius:11px;}
+.content-solicitacoes .status-tab-btn{flex:1 1 0; min-width:0; justify-content:center; gap:6px; padding:7px 9px; font-size:11.5px; white-space:nowrap;}
+.content-solicitacoes .seg-count{min-width:18px; line-height:16px; padding:0 4px; font-size:9.5px;}
+.content-solicitacoes .toolbar{display:grid; grid-template-columns:minmax(220px,1fr) minmax(145px,210px) auto; align-items:center;}
+.content-solicitacoes .search{max-width:none; min-width:0;}
+.content-solicitacoes .toolbar select{min-width:0; width:100%;}
+.content-solicitacoes #sol-table .table-scroll{max-height:calc(100vh - 365px); min-height:150px;}
+.content-solicitacoes #sol-table table{min-width:780px;}
+
+/* AUDITORIA: filtros enxutos, tabela legível e densidade maior. */
+.content-logs .panel{padding:15px;}
+.content-logs .panel-head{margin-bottom:10px;}
+.content-logs .toolbar{display:grid; grid-template-columns:minmax(220px,1fr) auto;}
+.content-logs .search{max-width:none; min-width:0;}
+.content-logs #log-table .table-scroll{max-height:calc(100vh - 300px); min-height:150px;}
+.content-logs #log-table table{min-width:650px;}
+
+/* CONFIGURAÇÕES: dois cartões com a mesma largura visual e alinhamento central. */
+.content-config .settings-grid{width:100%; max-width:1120px; margin:0 auto; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:stretch;}
+.content-config .settings-grid > .panel{padding:18px; margin:0;}
+.content-config .panel-head{margin-bottom:14px;}
+.content-config .detail-grid{gap:8px 10px; margin-bottom:12px; font-size:12.5px;}
+.content-config .detail-grid dt{font-size:11.5px;}
+.content-config .form-actions{margin-top:6px;}
+
+/* Modais mais curtos e formulários mais compactos. */
+.modal{padding:22px; max-height:calc(100vh - 36px);}
+.modal h3{font-size:20px;}
+.modal .modal-sub{font-size:12.5px; margin-bottom:16px;}
+.modal .field-row,.modal .field-row-3{gap:10px;}
+.modal .modal-actions{margin-top:18px; padding-top:12px;}
+
+@media (max-width:1250px){
+  .content-dashboard .stat-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+  .topbar{width:100%;}
+}
+@media (max-width:1080px){
+  .content{padding-inline:8px;}
+  .content-dashboard .stat-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+  .content-produtos .toolbar{grid-template-columns:minmax(180px,1fr) minmax(130px,1fr) minmax(130px,1fr);}
+  .content-produtos .toolbar-count{grid-column:1/-1; margin:0;}
+}
+@media (max-width:860px){
+  #app{padding:10px;}
+  .main{max-width:none;}
+  .topbar{top:8px; width:100%; padding:12px; gap:10px;}
+  .content{max-width:none; padding:12px 4px 18px;}
+  .content-dashboard .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;}
+  .content-dashboard .dashboard-2col{grid-template-columns:minmax(0,1fr); gap:0;}
+  .content-dashboard .dashboard-2col > .panel{margin-bottom:10px;}
+  .content-produtos .summary-strip{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .content-produtos .toolbar{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .content-produtos .toolbar .search{grid-column:1/-1;}
+  .content-produtos #produtos-table .table-scroll,
+  .content-solicitacoes #sol-table .table-scroll,
+  .content-logs #log-table .table-scroll{max-height:60vh;}
+  .content-solicitacoes .seg{overflow-x:auto;}
+  .content-solicitacoes .status-tab-btn{flex:0 0 auto;}
+  .content-solicitacoes .toolbar{grid-template-columns:minmax(0,1fr) minmax(125px, .7fr);}
+  .content-solicitacoes .toolbar-count{grid-column:1/-1; margin:0;}
+  .content-config .settings-grid{grid-template-columns:minmax(0,1fr); max-width:650px;}
+}
+@media (max-width:520px){
+  .topbar{align-items:flex-start;}
+  .topbar-main{flex-basis:100%;}
+  .topbar-actions{width:100%; gap:7px;}
+  .topbar-insights{flex:1; min-width:0;}
+  .topbar-insight{flex:1; min-width:0;}
+  .topbar-insight-copy small{white-space:normal;}
+  .content-dashboard .stat-card{padding:10px; min-height:104px;}
+  .content-dashboard .stat-card .value{font-size:28px;}
+  .content-dashboard .stat-card .value.value-money{font-size:18px;}
+  .content-dashboard .stat-card .click-hint{font-size:9.5px;}
+  .content-solicitacoes .toolbar{grid-template-columns:1fr;}
+  .content-solicitacoes .toolbar-count{grid-column:auto;}
+  .content-logs .toolbar{grid-template-columns:1fr;}
+  .content-produtos .toolbar{grid-template-columns:1fr;}
+  .content-produtos .toolbar .search{grid-column:auto;}
+  .panel-head .btn-group{width:100%;}
+  .panel-head .btn-group button{flex:1;}
+  .modal{padding:18px;}
+}
+@media (max-height:760px) and (min-width:861px){
+  .content{padding-top:10px; padding-bottom:12px;}
+  .topbar{padding-top:9px; padding-bottom:9px;}
+  .content-dashboard .stat-card{min-height:96px; padding-top:9px; padding-bottom:8px;}
+  .content-dashboard .stat-card .value{font-size:27px;}
+  .content-dashboard .panel-alert .table-scroll{max-height:100px;}
+  .content-dashboard .table-scroll{max-height:150px;}
+  .content-dashboard .dashboard-2col > .panel,.content-dashboard > .page > .panel{padding:11px;}
+}
