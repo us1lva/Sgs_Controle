@@ -12,6 +12,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // ============================================================================
 (function iniciarMelhorias(){
   const reduz = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Fundo mais calmo: a malha de scanner/canvas fica desligada por padrão.
+  // As manchas suaves em CSS continuam visíveis, sem linhas brilhantes seguindo o mouse.
+  const animarMalhaFundo = false;
   const html = document.documentElement;
   const ondas = [];          // ondas de choque (clique)
   let wrapBg = null;
@@ -32,8 +35,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     wrapBg.innerHTML = '<i></i><i></i><i></i>';
     document.body.insertBefore(wrapBg, document.body.firstChild);
 
-    // Quem prefere menos movimento fica só com as manchas estáticas.
-    if(reduz) return;
+    // Quem prefere menos movimento — ou usa o visual calmo padrão — fica só com as manchas estáticas.
+    if(reduz || !animarMalhaFundo) return;
 
     // Canvas sobre a malha de 32px do body. Tudo acontece nos cruzamentos:
     //  - mouse ilumina linhas e nós; clique dispara uma onda de choque;
