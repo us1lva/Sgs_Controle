@@ -407,3 +407,155 @@ tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--amber);}
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after{animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important;}
 }
+
+/* =====================================================================
+   MELHORIAS — fundo vivo + microinterações (prefixo mx-)
+   Camada aditiva: usa as variáveis do tema (--amber, --panel, --steel...)
+   e não substitui tickets, botões físicos, tabelas nem o gráfico zebrado.
+   Para remover: apague daqui até o fim do arquivo.
+   ===================================================================== */
+
+/* ---------- Fundo: manchas de luz com parallax (malha/agentes: canvas) ---------- */
+.mx-bg{
+  position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;
+  translate:calc(var(--px,0) * -22px) calc(var(--py,0) * -14px); transition:translate .8s var(--ease);
+}
+.mx-bg i{position:absolute; width:46vmax; height:46vmax; border-radius:50%; will-change:transform;}
+.mx-bg i:nth-child(1){top:-20vmax; left:-12vmax; background:radial-gradient(circle, rgba(255,196,0,.17), transparent 65%); animation:mx-drift-a 24s ease-in-out infinite alternate;}
+.mx-bg i:nth-child(2){bottom:-22vmax; right:-14vmax; background:radial-gradient(circle, rgba(82,198,242,.15), transparent 65%); animation:mx-drift-b 30s ease-in-out infinite alternate;}
+.mx-bg i:nth-child(3){display:none;}
+[data-theme="light"] .mx-bg i{opacity:.6;}
+@keyframes mx-drift-a{to{transform:translate(16vw,12vh) scale(1.18);}}
+@keyframes mx-drift-b{to{transform:translate(-14vw,-10vh) scale(1.22);}}
+@keyframes mx-drift-c{to{transform:translate(-20vw,14vh) scale(.82);}}
+
+/* O app fica acima do fundo; superfícies em "vidro" deixam a luz passar. */
+#app{position:relative; z-index:1;}
+.sidebar, .panel, .stat-card{background:color-mix(in srgb, var(--panel) 84%, transparent);}
+@media (max-width:860px){ .sidebar{background:color-mix(in srgb, var(--panel) 96%, transparent);} }
+
+/* ---------- Faixas zebradas em movimento (fita de galpão) ----------
+   O deslocamento = 1 período horizontal da listra (período × √2),
+   por isso o loop é contínuo, sem "pulo". */
+@keyframes mx-stripe-brand{to{background-position:14.142px 0;}}
+@keyframes mx-stripe-bar{to{background-position:15.556px 0;}}
+@keyframes mx-stripe-badge{to{background-position:16.97px 0;}}
+@keyframes mx-stripe-login{to{background-position:28.284px 0;}}
+.brand::before{animation:mx-stripe-brand 1.8s linear infinite;}
+.chart-fill{animation:grow .9s var(--ease) backwards .3s, mx-stripe-bar 1.4s linear infinite;}
+.badge.urg-alta{animation:mx-stripe-badge 1.4s linear infinite;}
+.login-box::before{animation:mx-stripe-login 2.4s linear infinite;}
+.chart-row{transition:color .2s;}
+.chart-row:hover .chart-fill{filter:brightness(1.18);}
+.chart-row:hover .chart-label{color:var(--text);}
+
+/* ---------- Cards: foco de luz, profundidade e alerta ---------- */
+.stat-card{isolation:isolate;}
+.stat-card .mx-spot, .stat-card .mx-ring{position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:-1;}
+.stat-card .mx-spot{
+  background:radial-gradient(260px circle at var(--mx,50%) var(--my,50%), rgba(255,196,0,.19), transparent 62%);
+  opacity:0; transition:opacity .3s;
+}
+.stat-card:hover .mx-spot{opacity:1;}
+/* textos em "camadas": se movem em direções opostas conforme o mouse */
+.stat-card .label, .stat-card .value{transition:translate .25s var(--ease), text-shadow .3s;}
+.stat-card:hover .label{translate:calc(var(--cx,0) * -3px) calc(var(--cy,0) * -2px);}
+.stat-card:hover .value{
+  translate:calc(var(--cx,0) * 6px) calc(var(--cy,0) * 4px);
+  text-shadow:0 0 22px color-mix(in srgb, currentColor 38%, transparent);
+}
+.stat-card.danger .mx-ring{animation:mx-ring 2.4s ease-in-out infinite;}
+@keyframes mx-ring{
+  0%,100%{box-shadow:inset 0 0 0 1px rgba(255,90,71,.25), inset 0 0 24px rgba(255,90,71,.03);}
+  50%{box-shadow:inset 0 0 0 1px rgba(255,90,71,.85), inset 0 0 30px rgba(255,90,71,.2);}
+}
+.stat-card.warn .mx-ring{animation:mx-ring-warn 3.2s ease-in-out infinite;}
+@keyframes mx-ring-warn{
+  0%,100%{box-shadow:inset 0 0 0 1px rgba(255,196,0,.15);}
+  50%{box-shadow:inset 0 0 0 1px rgba(255,196,0,.6), inset 0 0 26px rgba(255,196,0,.1);}
+}
+
+/* ---------- Navegação ---------- */
+.nav-item{transition:background .2s var(--ease), color .2s var(--ease), translate .3s var(--spring), scale .15s;}
+.nav-item:hover{translate:4px 0;}
+.nav-item:active{scale:.97;}
+
+/* ---------- Botões: magnéticos, onda, faíscas e brilho ---------- */
+button.primary{
+  transition:transform .15s var(--ease), box-shadow .15s var(--ease), translate .3s var(--ease), background .2s, border-color .2s, color .2s;
+}
+button.primary, button.secondary, button.icon-btn, button.status-tab-btn{position:relative; overflow:hidden;}
+.mx-ripple{position:absolute; border-radius:50%; background:rgba(255,255,255,.35); transform:scale(0); animation:mx-ripple .6s ease-out forwards; pointer-events:none;}
+button.primary .mx-ripple{background:rgba(27,21,0,.25);}
+@keyframes mx-ripple{to{transform:scale(1); opacity:0;}}
+button.primary::after{
+  content:""; position:absolute; inset:0; pointer-events:none; transform:translateX(-120%);
+  background:linear-gradient(105deg, transparent 35%, rgba(255,255,255,.35) 50%, transparent 65%);
+}
+button.primary:hover::after{transform:translateX(120%); transition:transform .7s var(--ease);}
+.mx-spark{
+  position:fixed; width:8px; height:8px; margin:-4px 0 0 -4px; z-index:200; pointer-events:none;
+  animation:mx-spark .8s cubic-bezier(.15,.7,.3,1) forwards;
+}
+@keyframes mx-spark{
+  from{transform:translate(0,0) scale(1) rotate(0); opacity:1;}
+  to{transform:translate(var(--dx),var(--dy)) scale(0) rotate(200deg); opacity:0;}
+}
+
+/* ---------- Entrada da aba: varredura do scanner + revelação ---------- */
+.content{position:relative;}
+@keyframes mx-clip{from{clip-path:inset(0 0 100% 0);} to{clip-path:inset(-80px -30px -80px -30px);}}
+.content.mx-enter{animation:mx-clip .9s cubic-bezier(.65,0,.35,1) both;}
+.mx-wipe{
+  position:absolute; left:0; right:0; top:0; height:2px; z-index:5; pointer-events:none;
+  background:linear-gradient(90deg, transparent, var(--amber) 30%, var(--amber) 70%, transparent);
+  box-shadow:0 0 22px 3px rgba(255,196,0,.55);
+  animation:mx-wipe .9s cubic-bezier(.65,0,.35,1) forwards;
+}
+@keyframes mx-wipe{0%{top:0; opacity:1;} 85%{opacity:1;} 100%{top:100%; opacity:0;}}
+@keyframes mx-rise{from{opacity:0; transform:translateY(16px);} to{opacity:1; transform:none;}}
+@keyframes mx-fade{from{opacity:0;} to{opacity:1;}}
+.mx-enter .panel{animation:mx-rise .65s var(--ease) backwards; animation-delay:calc(280ms + var(--i,0) * 100ms);}
+.mx-enter tbody tr{animation:mx-fade .45s ease backwards; animation-delay:calc(450ms + var(--i,0) * 26ms);}
+/* painéis fora da tela entram quando você rola até eles */
+.mx-enter .panel.mx-hold{animation:none;}
+.mx-hold{opacity:0; translate:0 28px;}
+.mx-hold.mx-in{opacity:1; translate:0 0; transition:opacity .7s var(--ease), translate .7s var(--ease);}
+/* título da aba */
+@keyframes mx-title{from{opacity:0; transform:translateY(10px); filter:blur(6px);} to{opacity:1; transform:none; filter:none;}}
+#app.mx-tab .topbar h2{animation:mx-title .7s var(--ease) both;}
+#app.mx-tab .topbar p{animation:mx-title .7s var(--ease) .08s both;}
+
+/* ---------- Sem repetir animações a cada re-render ---------- */
+#app.mx-quiet .content, #app.mx-quiet .stat-card, #app.mx-quiet .login-box{animation:none;}
+#app.mx-quiet .chart-fill{animation:mx-stripe-bar 1.4s linear infinite;}
+#app.mx-quiet-side .sidebar > *{animation:none;}
+#app.mx-quiet-modal .overlay, #app.mx-quiet-modal .modal{animation:none;}
+.toast.mx-toast-quiet{animation:none;}
+.toast::after{animation-delay:var(--mx-t,0s);}
+
+/* ---------- Login: fundo animado atrás do card + inclinação 3D ---------- */
+.overlay.mx-auth{background:transparent; -webkit-backdrop-filter:none; backdrop-filter:none;}
+.login-box{
+  transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
+  transition:transform .25s var(--ease);
+}
+.mx-login-brand{display:flex; align-items:center; gap:12px; margin-bottom:18px;}
+.mx-login-brand span{font-size:12.5px; font-weight:500; color:var(--text-dim);}
+
+/* ---------- Carregando ---------- */
+.mx-loader{display:flex; align-items:center; gap:14px; padding:48px; font-family:var(--font-mono); font-size:13px; color:var(--text-dim);}
+.mx-loader-ring{width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,196,0,.25); border-top-color:var(--amber); animation:mx-spin .8s linear infinite;}
+@keyframes mx-spin{to{transform:rotate(360deg);}}
+
+/* ---------- Troca de tema: círculo que se expande a partir do botão ---------- */
+::view-transition-old(root), ::view-transition-new(root){animation:none; mix-blend-mode:normal;}
+::view-transition-old(root){z-index:1;}
+::view-transition-new(root){z-index:2;}
+
+/* Modo leve: ativado sozinho pelo JS se a máquina não sustentar os efeitos */
+.mx-lite .mx-bg i, .mx-lite .stat-card .mx-ring, .mx-lite .chart-fill, .mx-lite .badge.urg-alta, .mx-lite .brand::before{animation:none;}
+.mx-lite .mx-bg{transition:none;}
+.mx-lite .topbar{-webkit-backdrop-filter:none; backdrop-filter:none; background:var(--bg);}
+
+@media (prefers-reduced-motion: reduce){ .mx-bg i{animation:none;} .mx-hold{opacity:1; translate:none;} }
