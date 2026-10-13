@@ -840,7 +840,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     main.appendChild(topbar);
 
     const content = document.createElement('div');
-    content.className = 'content';
+    // Identifica a aba para aplicar um layout compacto e específico sem duplicar estilos.
+    content.className = `content content-${state.tab}`;
+    content.dataset.tab = state.tab;
     main.appendChild(content);
 
     if(state.tab==='dashboard') renderDashboard(content);
