@@ -5,6 +5,337 @@ const SUPABASE_URL = 'https://nstyvsaolpwpqpigqsou.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZOU6Hpt3lUmQVBcPKL7Wyg_mxaLxEjx';
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ============================================================================
+// MELHORIAS VISUAIS — fundo animado (canvas) e microinterações.
+// Os estilos ficam no fim do style.css (seção "MELHORIAS"). Prefixo "mx-".
+// Para desligar: apague este bloco e a chamada posRender() dentro de render().
+// ============================================================================
+(function iniciarMelhorias(){
+  const reduz = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const html = document.documentElement;
+  const ondas = [];          // ondas de choque (clique)
+  let wrapBg = null;
+
+  // ---------- Fundo: manchas de luz + canvas ----------
+  function montar(){
+    if(document.querySelector('.mx-bg')) return;
+
+    wrapBg = document.createElement('div');
+    wrapBg.className = 'mx-bg';
+    wrapBg.setAttribute('aria-hidden', 'true');
+    wrapBg.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;';
+    wrapBg.innerHTML = '<i></i><i></i><i></i>';
+    document.body.insertBefore(wrapBg, document.body.firstChild);
+
+    // Quem prefere menos movimento fica só com as manchas estáticas.
+    if(reduz) return;
+
+    // Canvas sobre a malha de 32px do body. Tudo acontece nos cruzamentos:
+    //  - mouse ilumina linhas e nós; clique dispara uma onda de choque;
+    //  - a cada ~11s um scanner varre a tela (leitor de código de barras);
+    //  - "empilhadeiras" (AGVs) percorrem as linhas da malha deixando rastro
+    //    e um ping em alguns cruzamentos; nós piscam sozinhos.
+    const cv = document.createElement('canvas');
+    cv.id = 'mx-canvas';
+    cv.setAttribute('aria-hidden', 'true');
+    cv.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;';
+    document.body.insertBefore(cv, wrapBg.nextSibling);
+    const ctx = cv.getContext('2d');
+
+    const GAP = 32;                         // igual ao background-size do body
+    const RAIO = 190, BANDA = 90, CICLO = 11000, DUR = 3200;
+    const TRILHA = 650, ONDA_DUR = 950, ONDA_VEL = 0.5;
+    let W = 0, H = 0, ambiente = [], agvs = [], pings = [], ultimo = 0;
+    const mouse = { x: -9999, y: -9999, ax: -9999, ay: -9999, ativo: false };
+
+    function escolher(a){
+      const todas = [[1,0],[-1,0],[0,1],[0,-1]];
+      const sem_re = todas.filter(d => !((a.dx || a.dy) && d[0] === -a.dx && d[1] === -a.dy));
+      const ok = sem_re.filter(d => {
+        const nx = a.x + d[0] * GAP, ny = a.y + d[1] * GAP;
+        return nx > GAP / 2 && nx < W - GAP / 2 && ny > GAP / 2 && ny < H - GAP / 2;
+      });
+      const reto = ok.find(d => d[0] === a.dx && d[1] === a.dy);
+      const d = (reto && Math.random() < .68) ? reto : (ok[Math.floor(Math.random() * ok.length)] || sem_re[0]);
+      a.dx = d[0]; a.dy = d[1]; a.tx = a.x + a.dx * GAP; a.ty = a.y + a.dy * GAP;
+    }
+
+    function redimensionar(){
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth; H = window.innerHeight;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const cols = Math.floor(W / GAP), rows = Math.floor(H / GAP);
+      const pos = () => [(1 + Math.floor(Math.random() * (cols - 1))) * GAP + .5, (1 + Math.floor(Math.random() * (rows - 1))) * GAP + .5];
+
+      const n = Math.max(8, Math.min(22, Math.round(W * H / 90000)));
+      ambiente = [];
+      for(let i = 0; i < n; i++){
+        const p = pos();
+        ambiente.push({ x: p[0], y: p[1], fase: Math.random() * 7000, periodo: 3800 + Math.random() * 3600 });
+      }
+      const m = Math.max(3, Math.min(7, Math.round(W * H / 260000)));
+      agvs = [];
+      for(let i = 0; i < m; i++){
+        const p = pos();
+        const a = { x: p[0], y: p[1], tx: p[0], ty: p[1], dx: 0, dy: 0, v: 55 + Math.random() * 60, trilha: [] };
+        escolher(a); agvs.push(a);
+      }
+    }
+
+    function moverAgvs(t, dt){
+      for(const a of agvs){
+        let passo = a.v * dt / 1000;
+        while(passo > 0){
+          const dx = a.tx - a.x, dy = a.ty - a.y, dist = Math.abs(dx) + Math.abs(dy);
+          if(dist <= passo){
+            a.x = a.tx; a.y = a.ty; passo -= dist;
+            if(Math.random() < .4) pings.push({ x: a.x, y: a.y, t0: t });
+            escolher(a);
+          } else { a.x += Math.sign(dx) * passo; a.y += Math.sign(dy) * passo; passo = 0; }
+        }
+        a.trilha.push({ x: a.x, y: a.y, t });
+        while(a.trilha.length && t - a.trilha[0].t > TRILHA) a.trilha.shift();
+      }
+    }
+
+    function desenhar(t){
+      const dt = Math.min(ultimo ? t - ultimo : 16, 64); ultimo = t;
+      const A = html.getAttribute('data-theme') === 'light' ? '168,122,0' : '255,196,0';
+      ctx.clearRect(0, 0, W, H);
+      mouse.x += (mouse.ax - mouse.x) * 0.16;
+      mouse.y += (mouse.ay - mouse.y) * 0.16;
+      moverAgvs(t, dt);
+
+      const fase = t % CICLO;
+      const varrendo = fase < DUR;
+      const scanY = varrendo ? -BANDA + (fase / DUR) * (H + BANDA * 2) : -9999;
+
+      // Mouse: brilho suave + linhas da malha acesas em degradê.
+      if(mouse.ativo){
+        const g = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, RAIO + 40);
+        g.addColorStop(0, 'rgba(' + A + ',.10)'); g.addColorStop(1, 'rgba(' + A + ',0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(mouse.x - RAIO - 40, mouse.y - RAIO - 40, (RAIO + 40) * 2, (RAIO + 40) * 2);
+
+        const lg = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, RAIO);
+        lg.addColorStop(0, 'rgba(' + A + ',.5)'); lg.addColorStop(1, 'rgba(' + A + ',0)');
+        ctx.strokeStyle = lg; ctx.lineWidth = 1; ctx.beginPath();
+        for(let c = Math.floor((mouse.x - RAIO) / GAP); c <= Math.ceil((mouse.x + RAIO) / GAP); c++){
+          const x = c * GAP + .5; ctx.moveTo(x, mouse.y - RAIO); ctx.lineTo(x, mouse.y + RAIO);
+        }
+        for(let r = Math.floor((mouse.y - RAIO) / GAP); r <= Math.ceil((mouse.y + RAIO) / GAP); r++){
+          const y = r * GAP + .5; ctx.moveTo(mouse.x - RAIO, y); ctx.lineTo(mouse.x + RAIO, y);
+        }
+        ctx.stroke();
+      }
+
+      // Scanner: faixa de luz + linha fina.
+      if(varrendo){
+        const g = ctx.createLinearGradient(0, scanY - 70, 0, scanY + 70);
+        g.addColorStop(0, 'rgba(' + A + ',0)'); g.addColorStop(.5, 'rgba(' + A + ',.09)'); g.addColorStop(1, 'rgba(' + A + ',0)');
+        ctx.fillStyle = g; ctx.fillRect(0, scanY - 70, W, 140);
+        const l = ctx.createLinearGradient(0, 0, W, 0);
+        l.addColorStop(0, 'rgba(' + A + ',0)'); l.addColorStop(.5, 'rgba(' + A + ',.6)'); l.addColorStop(1, 'rgba(' + A + ',0)');
+        ctx.fillStyle = l; ctx.fillRect(0, scanY, W, 1.5);
+      }
+
+      // Ondas de choque (clique): anel + nós acesos na passagem.
+      for(let i = ondas.length - 1; i >= 0; i--){
+        const o = ondas[i], idade = Math.max(0, t - o.t0);
+        if(idade > ONDA_DUR){ ondas.splice(i, 1); continue; }
+        o.r = idade * ONDA_VEL; o.a = 1 - idade / ONDA_DUR;
+        ctx.strokeStyle = 'rgba(' + A + ',' + (.55 * o.a).toFixed(3) + ')'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(' + A + ',' + (.25 * o.a).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r * .72, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // Nós (cruzamentos da malha) acesos por mouse, scanner e ondas.
+      const cols = Math.ceil(W / GAP) + 1, rows = Math.ceil(H / GAP) + 1;
+      for(let r = 0; r < rows; r++){
+        const y = r * GAP + .5;
+        const dv = varrendo ? Math.abs(y - scanY) : 9999;
+        for(let c = 0; c < cols; c++){
+          const x = c * GAP + .5;
+          let k = 0;
+          if(mouse.ativo){
+            const dx = x - mouse.x, dy = y - mouse.y, d2 = dx * dx + dy * dy;
+            if(d2 < RAIO * RAIO) k = 1 - Math.sqrt(d2) / RAIO;
+          }
+          if(dv < BANDA) k = Math.max(k, (1 - dv / BANDA) * .9);
+          for(let w = 0; w < ondas.length; w++){
+            const o = ondas[w], d = Math.abs(Math.hypot(x - o.x, y - o.y) - o.r);
+            if(d < 34) k = Math.max(k, (1 - d / 34) * o.a);
+          }
+          if(k > 0.05){
+            const s = 2 + k * 3;
+            ctx.fillStyle = 'rgba(' + A + ',' + (.25 + k * .7).toFixed(3) + ')';
+            ctx.fillRect(x - s / 2, y - s / 2, s, s);
+          }
+        }
+      }
+
+      // Nós "respirando" sozinhos: ponto + anel que se expande.
+      for(const n of ambiente){
+        const u = ((t + n.fase) % n.periodo) / n.periodo;
+        ctx.fillStyle = 'rgba(' + A + ',.45)';
+        ctx.fillRect(n.x - 1.5, n.y - 1.5, 3, 3);
+        ctx.strokeStyle = 'rgba(' + A + ',' + (.38 * (1 - u)).toFixed(3) + ')';
+        ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(n.x, n.y, 3 + u * 16, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // Pings das chegadas das empilhadeiras.
+      for(let i = pings.length - 1; i >= 0; i--){
+        const p = pings[i], u = Math.max(0, t - p.t0) / 700;
+        if(u >= 1){ pings.splice(i, 1); continue; }
+        ctx.strokeStyle = 'rgba(' + A + ',' + (.5 * (1 - u)).toFixed(3) + ')'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 3 + u * 14, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // Empilhadeiras: rastro que some + cabeça com halo.
+      for(const a of agvs){
+        const tr = a.trilha;
+        ctx.lineWidth = 2; ctx.lineCap = 'round';
+        for(let i = 1; i < tr.length; i++){
+          const idade = (t - tr[i].t) / TRILHA;
+          ctx.strokeStyle = 'rgba(' + A + ',' + (.55 * (1 - idade)).toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(tr[i - 1].x, tr[i - 1].y); ctx.lineTo(tr[i].x, tr[i].y); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(' + A + ',.16)'; ctx.fillRect(a.x - 7, a.y - 7, 14, 14);
+        ctx.fillStyle = 'rgba(' + A + ',.95)'; ctx.fillRect(a.x - 2.5, a.y - 2.5, 5, 5);
+      }
+    }
+
+    // Desempenho adaptativo: mede o ritmo real dos quadros e, se a máquina não
+    // aguentar, desliga primeiro o que é decorativo (modo leve) e, em último
+    // caso, o canvas. Em PCs bons nada disso é acionado.
+    let nivel = 0, rafAnt = 0, amostra = [], inicio = 0, ultimoDesenho = 0, parou = false;
+    function laco(t){
+      if(parou) return;
+      requestAnimationFrame(laco);
+      if(!inicio) inicio = t;
+      if(rafAnt && t - inicio > 2000 && nivel < 2){
+        amostra.push(t - rafAnt);
+        if(amostra.length >= 90){
+          const media = amostra.reduce((a, b) => a + b, 0) / amostra.length;
+          amostra = [];
+          if(media > 34 && nivel === 0){ nivel = 1; html.classList.add('mx-lite'); inicio = t - 1000; }
+          else if(media > 45 && nivel === 1){
+            nivel = 2; parou = true; cv.remove();
+            return;
+          }
+        }
+      }
+      rafAnt = t;
+      const intervalo = nivel === 0 ? 24 : 48;     // ~40 fps / ~20 fps
+      if(t - ultimoDesenho < intervalo) return;
+      ultimoDesenho = t;
+      desenhar(t);
+    }
+
+    window.addEventListener('resize', redimensionar);
+    redimensionar();
+    window.addEventListener('pointermove', e => {
+      if(e.pointerType === 'touch') return;
+      mouse.ax = e.clientX; mouse.ay = e.clientY;
+      if(!mouse.ativo){ mouse.x = e.clientX; mouse.y = e.clientY; mouse.ativo = true; }
+      wrapBg.style.setProperty('--px', ((e.clientX / W) * 2 - 1).toFixed(3));
+      wrapBg.style.setProperty('--py', ((e.clientY / H) * 2 - 1).toFixed(3));
+    }, { passive: true });
+    html.addEventListener('mouseleave', () => { mouse.ativo = false; });
+    requestAnimationFrame(laco);
+  }
+
+  // ---------- Cards: foco de luz + textos em camadas ----------
+  document.addEventListener('pointermove', e => {
+    const card = e.target.closest && e.target.closest('.stat-card');
+    if(!card || e.pointerType === 'touch') return;
+    const r = card.getBoundingClientRect();
+    card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+    card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+    if(!reduz){
+      card.style.setProperty('--cx', (((e.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+      card.style.setProperty('--cy', (((e.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+    }
+  }, { passive: true });
+  document.addEventListener('pointerout', e => {
+    const card = e.target.closest && e.target.closest('.stat-card');
+    if(card && !card.contains(e.relatedTarget)){ card.style.setProperty('--cx', 0); card.style.setProperty('--cy', 0); }
+  });
+
+  // ---------- Login: card inclina levemente acompanhando o mouse ----------
+  document.addEventListener('pointermove', e => {
+    if(reduz || e.pointerType === 'touch') return;
+    const box = document.querySelector('#app .login-box');
+    if(!box) return;
+    box.style.setProperty('--ry', (((e.clientX / window.innerWidth) - .5) * 7).toFixed(2) + 'deg');
+    box.style.setProperty('--rx', (((e.clientY / window.innerHeight) - .5) * -6).toFixed(2) + 'deg');
+  }, { passive: true });
+
+  // ---------- Botões primários magnéticos ----------
+  let magRaf = 0, magX = 0, magY = 0;
+  function magnetizar(){
+    magRaf = 0;
+    document.querySelectorAll('#app button.primary:not(:disabled)').forEach(b => {
+      const r = b.getBoundingClientRect();
+      const dx = magX - (r.left + r.width / 2), dy = magY - (r.top + r.height / 2);
+      const d = Math.hypot(dx, dy), alc = Math.max(r.width, r.height) * .9 + 30;
+      if(d < alc){ const f = 1 - d / alc; b.style.translate = (dx * .16 * f).toFixed(1) + 'px ' + (dy * .22 * f).toFixed(1) + 'px'; }
+      else if(b.style.translate) b.style.translate = '';
+    });
+  }
+  document.addEventListener('pointermove', e => {
+    if(reduz || e.pointerType === 'touch') return;
+    magX = e.clientX; magY = e.clientY;
+    if(!magRaf) magRaf = requestAnimationFrame(magnetizar);
+  }, { passive: true });
+
+  // ---------- Cliques: onda de choque, onda no botão e faíscas ----------
+  function faiscas(x, y){
+    const cores = ['#FFC400', '#FFE066', '#ffffff'];
+    for(let i = 0; i < 12; i++){
+      const s = document.createElement('i');
+      const ang = Math.random() * Math.PI * 2, dist = 28 + Math.random() * 40;
+      s.className = 'mx-spark';
+      s.style.cssText = 'left:' + x + 'px;top:' + y + 'px;--dx:' + (Math.cos(ang) * dist).toFixed(1) + 'px;--dy:' + (Math.sin(ang) * dist).toFixed(1) + 'px;background:' + cores[i % 3];
+      document.body.appendChild(s);
+      setTimeout(() => s.remove(), 850);
+    }
+  }
+  document.addEventListener('pointerdown', e => {
+    if(reduz) return;
+    if(e.pointerType !== 'touch' || true) ondas.push({ x: e.clientX, y: e.clientY, t0: performance.now(), r: 0, a: 1 });
+    if(ondas.length > 4) ondas.shift();
+    const b = e.target.closest && e.target.closest('#app button.primary, #app button.secondary, #app button.icon-btn, #app button.status-tab-btn');
+    if(!b || b.disabled) return;
+    const r = b.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2;
+    const s = document.createElement('span');
+    s.className = 'mx-ripple';
+    s.style.cssText = 'width:' + d + 'px;height:' + d + 'px;left:' + (e.clientX - r.left - d / 2) + 'px;top:' + (e.clientY - r.top - d / 2) + 'px';
+    b.appendChild(s);
+    setTimeout(() => s.remove(), 650);
+    if(b.classList.contains('primary')) faiscas(e.clientX, e.clientY);
+  });
+
+  // ---------- Troca de tema: círculo que se expande a partir do botão ----------
+  window.mxTransicaoTema = function(ev, aplicar){
+    if(reduz || !document.startViewTransition || !ev){ aplicar(); return; }
+    const x = ev.clientX, y = ev.clientY;
+    const raio = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const vt = document.startViewTransition(aplicar);
+    vt.ready.then(() => {
+      html.animate(
+        { clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + raio + 'px at ' + x + 'px ' + y + 'px)'] },
+        { duration: 750, easing: 'cubic-bezier(.65,0,.35,1)', pseudoElement: '::view-transition-new(root)' }
+      );
+    }).catch(() => {});
+  };
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', montar);
+  else montar();
+})();
+
 (function(){
   const app = document.getElementById('app');
 
@@ -559,14 +890,131 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   // Render
   // ==========================================================================
 
+  // ==========================================================================
+  // Pós-render. O app redesenha tudo a cada toast/atualização em tempo real, o
+  // que fazia as animações de entrada (cards, sidebar, modal, toast) tocarem de
+  // novo toda hora. Aqui controlamos por "chave de tela": a animação só toca
+  // quando a tela/aba/modal realmente muda. Estilos: seção MELHORIAS do CSS.
+  // ==========================================================================
+  let mxUltimaChave = null, mxUltimoModal = null, mxUltimoToast = null, mxToastInicio = 0;
+  const mxReduz = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function mxContar(el, destino, formato, atraso){
+    const ini = performance.now() + atraso, dur = 950;
+    el.textContent = formato(0);
+    const passo = (agora) => {
+      if(!el.isConnected) return;
+      const p = Math.min(Math.max((agora - ini) / dur, 0), 1);
+      el.textContent = formato(destino * (1 - Math.pow(1 - p, 3)));
+      if(p < 1) requestAnimationFrame(passo);
+    };
+    requestAnimationFrame(passo);
+  }
+
+  function posRender(){
+    let chave;
+    if(!state.loaded) chave = 'load';
+    else if(state.recuperandoSenha) chave = 'recup';
+    else if(!state.session) chave = 'auth:' + state.authMode;
+    else if(state.isAdmin === null) chave = 'verif';
+    else if(!state.isAdmin) chave = 'negado';
+    else chave = 'app:' + state.tab;
+
+    const anterior = mxUltimaChave;
+    const mudouTela = chave !== anterior;
+    const soTrocouAba = mudouTela && chave.startsWith('app') && anterior && anterior.startsWith('app');
+    mxUltimaChave = chave;
+
+    // Re-render sem mudança de tela: não repete as animações de entrada.
+    app.classList.toggle('mx-quiet', !mudouTela);
+    app.classList.toggle('mx-quiet-side', !mudouTela || soTrocouAba);
+    app.classList.toggle('mx-quiet-modal', state.modal === mxUltimoModal);
+    mxUltimoModal = state.modal;
+
+    // Login / recuperação / acesso negado: deixa o fundo animado aparecer.
+    const ehAuth = chave.startsWith('auth') || chave === 'recup' || chave === 'negado';
+    if(ehAuth){
+      app.querySelectorAll('.overlay').forEach(o => o.classList.add('mx-auth'));
+      const box = app.querySelector('.login-box');
+      if(box && !box.querySelector('.mx-login-brand')){
+        box.insertAdjacentHTML('afterbegin', `
+          <div class="mx-login-brand">
+            <svg viewBox="0 0 240 110" height="26" xmlns="http://www.w3.org/2000/svg" aria-label="SGS" style="display:block;flex-shrink:0;">
+              <text x="0" y="82" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="98" letter-spacing="-3" fill="#77787B">SGS</text>
+              <line x1="0" y1="96" x2="228" y2="96" stroke="#F47920" stroke-width="6"/>
+              <line x1="210" y1="0" x2="210" y2="110" stroke="#F47920" stroke-width="6"/>
+            </svg>
+            <span>Controle de Estoque</span>
+          </div>`);
+      }
+    }
+
+    // Cards: elementos de luz (foco do mouse) e anel de alerta, atrás do conteúdo.
+    app.querySelectorAll('.stat-card').forEach(c => c.insertAdjacentHTML('afterbegin', '<i class="mx-spot"></i><i class="mx-ring"></i>'));
+
+    // Entrada da aba: números contam até o valor; painéis e linhas entram em sequência.
+    if(mudouTela && chave.startsWith('app') && !mxReduz){
+      const content = app.querySelector('.content');
+      if(content){
+        content.querySelectorAll('.panel').forEach((el, i) => el.style.setProperty('--i', i));
+        content.querySelectorAll('tbody tr').forEach((el, i) => el.style.setProperty('--i', Math.min(i, 14)));
+        content.querySelectorAll('.stat-card .value').forEach((el, i) => {
+          const txt = el.textContent.trim();
+          const atraso = i * 85 + 330;   // acompanha o "deal" dos tickets
+          if(/^\d+$/.test(txt)) mxContar(el, parseInt(txt, 10), v => String(Math.round(v)), atraso);
+          else if(/R\$/.test(txt)){
+            const n = parseFloat(txt.replace(/[^\d,]/g, '').replace(',', '.'));
+            if(!isNaN(n)) mxContar(el, n, fmtMoney, atraso);
+          }
+        });
+        content.querySelectorAll('.chart-val').forEach((el, i) => {
+          const m = el.textContent.trim().match(/^(\d+(?:[.,]\d+)?)%$/);
+          if(m) mxContar(el, parseFloat(m[1].replace(',', '.')), v => Math.round(v) + '%', 500 + i * 70);
+        });
+
+        // Painéis fora da tela entram só quando você rola até eles.
+        if('IntersectionObserver' in window){
+          const fora = [...content.querySelectorAll('.panel')].filter(p => p.getBoundingClientRect().top > window.innerHeight * .92);
+          if(fora.length){
+            const io = new IntersectionObserver(es => es.forEach(e => {
+              if(e.isIntersecting){ e.target.classList.add('mx-in'); io.unobserve(e.target); }
+            }), { threshold: .12 });
+            fora.forEach(p => { p.classList.add('mx-hold'); io.observe(p); });
+          }
+        }
+
+        content.insertAdjacentHTML('afterbegin', '<i class="mx-wipe"></i>');
+        content.classList.add('mx-enter');
+        app.classList.add('mx-tab');
+        setTimeout(() => { content.classList.remove('mx-enter'); content.querySelector('.mx-wipe')?.remove(); }, 1700);
+        setTimeout(() => app.classList.remove('mx-tab'), 1100);
+      }
+    }
+
+    // Toast: anima uma vez; a barra de tempo continua de onde estava.
+    const toast = app.querySelector('.toast');
+    if(toast){
+      const novo = state.toast !== mxUltimoToast;
+      if(novo) mxToastInicio = performance.now();
+      toast.classList.toggle('mx-toast-quiet', !novo);
+      toast.style.setProperty('--mx-t', (-(performance.now() - mxToastInicio) / 1000).toFixed(3) + 's');
+    }
+    mxUltimoToast = toast ? state.toast : null;
+  }
+
   function render(){
+    renderBase();
+    posRender();
+  }
+
+  function renderBase(){
     app.innerHTML = '';
-    if(!state.loaded){ app.appendChild(elFrag(`<div style="padding:40px;" class="dim mono">Conectando ao banco de dados...</div>`)); return; }
+    if(!state.loaded){ app.appendChild(elFrag(`<div class="mx-loader"><div class="mx-loader-ring"></div><span>Conectando ao banco de dados…</span></div>`)); return; }
 
     if(state.recuperandoSenha){ renderDefinirNovaSenhaModal(); return; }
     if(!state.session){ renderLogin(); return; }
 
-    if(state.isAdmin === null){ app.appendChild(elFrag(`<div style="padding:40px;" class="dim mono">Verificando permissões...</div>`)); return; }
+    if(state.isAdmin === null){ app.appendChild(elFrag(`<div class="mx-loader"><div class="mx-loader-ring"></div><span>Verificando permissões…</span></div>`)); return; }
 
     if(!state.isAdmin){ renderAcessoNegado(); return; }
 
@@ -636,11 +1084,13 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     topbar.querySelector('#menu-toggle-btn').onclick = () => { state.sidebarAberta = true; render(); };
 
-    topbar.querySelector('#theme-toggle-btn').onclick = () => {
-      state.theme = state.theme === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('app_theme', state.theme);
-      document.documentElement.setAttribute('data-theme', state.theme);
-      render();
+    topbar.querySelector('#theme-toggle-btn').onclick = (ev) => {
+      window.mxTransicaoTema(ev, () => {
+        state.theme = state.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('app_theme', state.theme);
+        document.documentElement.setAttribute('data-theme', state.theme);
+        render();
+      });
     };
 
     main.appendChild(topbar);
