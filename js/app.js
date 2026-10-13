@@ -1032,28 +1032,44 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     backdrop.onclick = () => { state.sidebarAberta = false; render(); };
     app.appendChild(backdrop);
 
+    const qtdRepor = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5)).length;
+    const navItem = (tab, ico, label, count, tone) => `
+      <div class="nav-item ${state.tab===tab?'active':''}" data-tab="${tab}" role="button" tabindex="0">
+        <span class="nav-ico">${ico}</span><span class="nav-label">${label}</span>
+        ${count ? `<span class="nav-count ${tone||''}">${count}</span>` : ''}
+      </div>`;
+
     const sidebar = elFrag(`
       <div class="sidebar ${state.sidebarAberta ? 'open' : ''}">
-        <div style="display:flex; align-items:center; gap:10px;">
+        <div class="brand-row">
           <svg viewBox="0 0 240 110" height="26" xmlns="http://www.w3.org/2000/svg" aria-label="SGS" style="display:block; flex-shrink:0;">
             <text x="0" y="82" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="98" letter-spacing="-3" fill="#77787B">SGS</text>
             <line x1="0" y1="96" x2="228" y2="96" stroke="#F47920" stroke-width="6"/>
             <line x1="210" y1="0" x2="210" y2="110" stroke="#F47920" stroke-width="6"/>
           </svg>
-          <span class="brand-badge" style="margin-left:4px;">Controle de Estoque</span>
+          <span class="brand-badge">Controle de Estoque</span>
         </div>
 
-        <div class="role-selector">
-          <label>Sessão</label>
-          <div class="mono" style="font-size:12px; color:var(--text); word-break:break-all;">${state.session.user.email}</div>
-        </div>
+        <nav class="nav-group">
+          <div class="nav-title">Operação</div>
+          ${navItem('dashboard', '📊', 'Dashboard')}
+          ${navItem('solicitacoes', '📝', 'Solicitações', pendentes, 'warn')}
+          ${navItem('produtos', '📦', 'Produtos', qtdRepor, 'danger')}
+        </nav>
 
-        <div class="nav-item ${state.tab==='dashboard'?'active':''}" data-tab="dashboard">📊 Dashboard</div>
-        <div class="nav-item ${state.tab==='produtos'?'active':''}" data-tab="produtos">📦 Produtos</div>
-        <div class="nav-item ${state.tab==='solicitacoes'?'active':''}" data-tab="solicitacoes">📝 Solicitações<span class="dot ${pendentes?'show':''}"></span></div>
-        <div class="nav-item ${state.tab==='logs'?'active':''}" data-tab="logs">📜 Histórico / Logs</div>
-        <div class="nav-item ${state.tab==='config'?'active':''}" data-tab="config">⚙️ Configurações</div>
-        <div class="nav-item" id="nav-logout" style="margin-top:auto;">🚪 Sair</div>
+        <nav class="nav-group">
+          <div class="nav-title">Sistema</div>
+          ${navItem('logs', '📜', 'Histórico / Logs')}
+          ${navItem('config', '⚙️', 'Configurações')}
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="user-card">
+            <span class="user-avatar">${esc((state.session.user.email||'?').charAt(0).toUpperCase())}</span>
+            <div class="user-info"><small>Sessão</small><span class="mono" title="${esc(state.session.user.email)}">${esc(state.session.user.email)}</span></div>
+          </div>
+          <div class="nav-item" id="nav-logout" role="button" tabindex="0"><span class="nav-ico">🚪</span><span class="nav-label">Sair</span></div>
+        </div>
       </div>
     `);
 
@@ -1061,6 +1077,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       n.onclick = ()=>{ state.tab=n.dataset.tab; state.sidebarAberta = false; render(); };
     });
     sidebar.querySelector('#nav-logout').onclick = logoutUser;
+    sidebar.querySelectorAll('.nav-item').forEach(n => n.onkeydown = (e) => { if(e.key==='Enter' || e.key===' '){ e.preventDefault(); n.click(); } });
     app.appendChild(sidebar);
 
     const main = document.createElement('div');
@@ -1078,12 +1095,12 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const topbar = elFrag(`
       <div class="topbar">
-        <div style="display:flex; align-items:center; gap:10px;">
+        <div class="topbar-title">
           <button class="menu-toggle-btn" id="menu-toggle-btn" aria-label="Abrir menu">☰</button>
           <div><h2>${title}</h2><p>${sub}</p></div>
         </div>
-        <button class="secondary" id="theme-toggle-btn" style="display:flex; align-items:center; gap:6px;">
-          ${state.theme === 'dark' ? '☀️ Modo Claro' : '🌙 Modo Escuro'}
+        <button class="secondary theme-btn" id="theme-toggle-btn">
+          ${state.theme === 'dark' ? '☀️ Modo claro' : '🌙 Modo escuro'}
         </button>
       </div>
     `);
@@ -1227,6 +1244,18 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     app.appendChild(overlay);
   }
 
+  // ---------- Helpers de organização visual ----------
+  function statusEstoque(p){
+    const e = Number(p.estoque||0), mn = Number(p.quantidadeMinima||5);
+    if(e <= 0) return { k:'zero', label:'Sem estoque' };
+    if(e <= mn) return { k:'baixo', label:'Repor' };
+    return { k:'ok', label:'Normal' };
+  }
+  function medidorEstoque(p){
+    const e = Number(p.estoque||0), mn = Math.max(Number(p.quantidadeMinima||5), 1);
+    const pct = Math.max(0, Math.min(100, Math.round(e / (mn * 2) * 100)));
+    return `<div class="meter ${statusEstoque(p).k}" title="${e} em estoque · mínimo ${mn}"><span style="width:${pct}%"></span></div>`;
+  }
   function renderDashboard(content){
     const abaixoMinimo = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5));
     const pendentes = state.solicitacoes.filter(s=>s.status==='pendente');
@@ -1252,54 +1281,56 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       const val = Number(p.estoque||0) * Number(p.preco||0);
       categorias[p.categoria] = (categorias[p.categoria] || 0) + val;
     });
+    const catsOrdenadas = Object.entries(categorias).sort((a,b) => b[1] - a[1]);
 
     const dashboardEl = elFrag(`
-      <div>
+      <div class="page">
         <div class="stat-grid">
-          <div class="stat-card" data-card="total">
-            <div class="label">SKUs no Catálogo</div>
-            <div class="value">${state.produtos.length}</div>
-            <span class="click-hint">Clique para ver inventário →</span>
-          </div>
           <div class="stat-card ${itensUrgentes.length ? 'danger' : ''}" data-card="urgente">
-            <div class="label">🔴 Compra Urgente (sem estoque)</div>
+            <div class="label">🔴 Compra urgente</div>
             <div class="value">${itensUrgentes.length}</div>
             <span class="click-hint">Colaboradores aguardando →</span>
           </div>
-          <div class="stat-card ${abaixoMinimo.length ? 'danger' : ''}" data-card="reposicao">
-            <div class="label">Alerta de Reposição</div>
-            <div class="value">${abaixoMinimo.length}</div>
-            <span class="click-hint">Clique para ver itens a repor →</span>
-          </div>
           <div class="stat-card ${pendentes.length ? 'warn' : ''}" data-card="pendentes">
-            <div class="label">Aguardando Aprovação</div>
+            <div class="label">Aguardando aprovação</div>
             <div class="value">${pendentes.length}</div>
-            <span class="click-hint">Clique para gerenciar pedidos →</span>
+            <span class="click-hint">Gerenciar pedidos →</span>
+          </div>
+          <div class="stat-card ${abaixoMinimo.length ? 'danger' : ''}" data-card="reposicao">
+            <div class="label">Alerta de reposição</div>
+            <div class="value">${abaixoMinimo.length}</div>
+            <span class="click-hint">Ver itens a repor →</span>
+          </div>
+          <div class="stat-card" data-card="total">
+            <div class="label">SKUs no catálogo</div>
+            <div class="value">${state.produtos.length}</div>
+            <span class="click-hint">Abrir inventário →</span>
           </div>
           <div class="stat-card" data-card="capital">
-            <div class="label">Capital Imobilizado</div>
-            <div class="value" style="font-size:24px; color:var(--steel);">${fmtMoney(valorTotal)}</div>
-            <span class="click-hint">Clique para ver detalhes →</span>
+            <div class="label">Capital imobilizado</div>
+            <div class="value value-money">${fmtMoney(valorTotal)}</div>
+            <span class="click-hint">Ver detalhes →</span>
           </div>
         </div>
 
         ${itensUrgentes.length > 0 ? `
-          <div class="panel" style="border-color:var(--danger);">
+          <div class="panel panel-alert">
             <div class="panel-head">
-              <h3 style="color:var(--danger);">🔴 Compra Urgente — Colaboradores Aguardando</h3>
-              <button class="secondary" id="btn-exportar-urgente" style="border-color:var(--danger); color:var(--danger);">📥 Exportar Lista de Compra Urgente</button>
+              <div>
+                <h3 class="t-danger">🔴 Compra urgente — colaboradores aguardando</h3>
+                <p class="panel-sub">Itens pedidos que não têm estoque agora. Diferente do alerta de reposição (preventivo), aqui já existe gente esperando.</p>
+              </div>
+              <button class="secondary btn-danger-outline" id="btn-exportar-urgente">📥 Exportar lista</button>
             </div>
-            <p class="dim" style="font-size:12.5px; margin:-8px 0 14px;">Estes itens foram pedidos por colaboradores mas não têm estoque agora. Diferente do "Alerta de Reposição" (preventivo), aqui já existe gente esperando.</p>
             <div class="table-scroll">
             <table>
-              <thead><tr><th>Material</th><th>SKU</th><th>Qtd. Pendente</th><th>Pedidos Aguardando</th><th>Ação</th></tr></thead>
+              <thead><tr><th>Material</th><th class="num">Qtd. pendente</th><th class="num">Pedidos</th><th class="col-actions">Ação</th></tr></thead>
               <tbody>${itensUrgentes.map(it=>`
                 <tr>
-                  <td style="font-weight:600; color:var(--danger);">${esc(it.nome)}</td>
-                  <td class="mono dim">${esc(it.sku)}</td>
-                  <td class="mono" style="font-weight:700; color:var(--danger);">${it.quantidade}</td>
-                  <td class="mono dim">${it.pedidos}</td>
-                  <td>${it.produtoId ? `<button class="icon-btn" data-repor="${it.produtoId}">Repor / Editar</button>` : ''}</td>
+                  <td><div class="cell-main t-danger">${esc(it.nome)}</div><div class="cell-sub mono">${esc(it.sku)}</div></td>
+                  <td class="mono num t-danger strong">${it.quantidade}</td>
+                  <td class="mono num dim">${it.pedidos}</td>
+                  <td class="col-actions">${it.produtoId ? `<button class="icon-btn" data-repor="${it.produtoId}">Repor / Editar</button>` : ''}</td>
                 </tr>`).join('')}
               </tbody>
             </table>
@@ -1309,18 +1340,21 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         <div class="dashboard-2col">
           <div class="panel">
-            <div class="panel-head"><h3>Últimas Solicitações Pendentes</h3></div>
+            <div class="panel-head">
+              <h3>Solicitações pendentes</h3>
+              ${pendentes.length > 5 ? `<button class="link-btn" id="btn-ver-pendentes">Ver todas (${pendentes.length}) →</button>` : ''}
+            </div>
             ${pendentes.length===0 ? `<div class="empty-state"><div class="glyph">🎉</div>Zero pendências na fila de aprovação.</div>` : `
               <div class="table-scroll">
               <table>
-                <thead><tr><th>Colaborador</th><th>Material</th><th>Qtd.</th><th>Urgência</th><th>Data</th></tr></thead>
+                <thead><tr><th>Colaborador</th><th>Material</th><th class="num">Qtd.</th><th>Urgência</th><th>Data</th></tr></thead>
                 <tbody>${pendentes.slice(0,5).map(s=>`
                   <tr>
-                    <td style="font-weight:500;">${esc(s.nome)}</td>
+                    <td><div class="cell-main">${esc(s.nome)}</div>${s.setor ? `<div class="cell-sub">${esc(s.setor)}</div>` : ''}</td>
                     <td>${formatarMateriaisCompacto(s)}</td>
-                    <td class="mono">${s.quantidade}</td>
+                    <td class="mono num">${s.quantidade}</td>
                     <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
-                    <td class="dim mono">${fmtDate(s.dataCriacao)}</td>
+                    <td class="dim mono small">${fmtDate(s.dataCriacao)}</td>
                   </tr>
                 `).join('')}</tbody>
               </table>
@@ -1329,14 +1363,14 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
           </div>
 
           <div class="panel">
-            <div class="panel-head"><h3>Capital por Categoria</h3></div>
+            <div class="panel-head"><h3>Capital por categoria</h3></div>
             <div class="chart-bar-container">
-              ${Object.keys(categorias).length === 0 ? `<div class="dim">Sem dados.</div>` : 
-                Object.entries(categorias).map(([cat, val]) => {
+              ${catsOrdenadas.length === 0 ? `<div class="dim">Sem dados.</div>` :
+                catsOrdenadas.map(([cat, val]) => {
                   const pct = valorTotal > 0 ? Math.round((val / valorTotal) * 100) : 0;
                   return `
-                    <div class="chart-row">
-                      <span class="chart-label" title="${cat}">${cat}</span>
+                    <div class="chart-row" title="${esc(cat)} · ${fmtMoney(val)}">
+                      <span class="chart-label">${esc(cat)}</span>
                       <div class="chart-track"><div class="chart-fill" style="width:${pct}%;"></div></div>
                       <span class="chart-val">${pct}%</span>
                     </div>
@@ -1349,24 +1383,29 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         <div class="panel">
           <div class="panel-head">
-            <h3>Ruptura de Estoque (Abaixo do Mínimo)</h3>
-            <div style="display:flex; gap:8px;">
-              ${abaixoMinimo.length > 0 ? `<button class="secondary" id="btn-exportar-compras">📥 Exportar Lista de Compras</button>` : ''}
-              ${abaixoMinimo.length > 0 ? `<button class="secondary" id="btn-ver-alerta-detalhado">Ver Lista de Reposição</button>` : ''}
+            <div>
+              <h3>Ruptura de estoque</h3>
+              <p class="panel-sub">Itens com estoque igual ou abaixo do mínimo configurado.</p>
             </div>
+            ${abaixoMinimo.length > 0 ? `
+              <div class="btn-group">
+                <button class="secondary" id="btn-exportar-compras">📥 Exportar lista de compras</button>
+                <button class="secondary" id="btn-ver-alerta-detalhado">Ver lista de reposição</button>
+              </div>` : ''}
           </div>
-          ${abaixoMinimo.length===0 ? `<div class="empty-state"><div class="glyph">🛡️</div>Estoque saudável. Todos os itens possuem estoque acima do mínimo.</div>` : `
+          ${abaixoMinimo.length===0 ? `<div class="empty-state"><div class="glyph">🛡️</div>Estoque saudável. Todos os itens estão acima do mínimo.</div>` : `
             <div class="table-scroll">
             <table>
-              <thead><tr><th>Material</th><th>SKU</th><th>Estoque Atual</th><th>Estoque Mínimo</th><th>Ação</th></tr></thead>
-              <tbody>${abaixoMinimo.map(p=>`
+              <thead><tr><th>Material</th><th>Situação</th><th class="col-meter">Nível</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="col-actions">Ação</th></tr></thead>
+              <tbody>${abaixoMinimo.map(p=>{ const st = statusEstoque(p); return `
                 <tr>
-                  <td style="font-weight:500;">${esc(p.nome)}</td>
-                  <td class="mono dim">${esc(p.sku)}</td>
-                  <td class="mono" style="color:var(--danger); font-weight:600;">${p.estoque} ${p.unidade}</td>
-                  <td class="mono dim">${p.quantidadeMinima} ${p.unidade}</td>
-                  <td><button class="icon-btn" data-repor="${p.id}">Repor / Editar</button></td>
-                </tr>`).join('')}
+                  <td><div class="cell-main">${esc(p.nome)}</div><div class="cell-sub mono">${esc(p.sku)}</div></td>
+                  <td><span class="badge st-${st.k}">${st.label}</span></td>
+                  <td class="col-meter">${medidorEstoque(p)}</td>
+                  <td class="mono num t-danger strong">${p.estoque} <small class="dim">${esc(p.unidade)}</small></td>
+                  <td class="mono num dim">${p.quantidadeMinima} ${esc(p.unidade)}</td>
+                  <td class="col-actions"><button class="icon-btn" data-repor="${p.id}">Repor / Editar</button></td>
+                </tr>`; }).join('')}
               </tbody>
             </table>
             </div>
@@ -1385,6 +1424,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         else if(type === 'capital'){ state.modal = { type: 'resumo-capital' }; render(); }
       };
     });
+
+    const btnVerPend = dashboardEl.querySelector('#btn-ver-pendentes');
+    if(btnVerPend) btnVerPend.onclick = () => { state.tab = 'solicitacoes'; state.filtroStatus = 'pendente'; render(); };
 
     const btnDetalhes = dashboardEl.querySelector('#btn-ver-alerta-detalhado');
     if(btnDetalhes) btnDetalhes.onclick = () => { state.modal = { type: 'alerta-reposicao' }; render(); };
@@ -1408,26 +1450,47 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   function renderProdutos(content){
     const cats = ['todas', ...new Set(state.produtos.map(p => p.categoria))];
+    if(!state.filtroEstoque) state.filtroEstoque = 'todos';
 
-    const panel = elFrag(`
-      <div class="panel">
-        <div class="panel-head">
-          <h3>Catálogo de Produtos</h3>
-          <div style="display:flex; gap:8px;">
-            <button class="secondary" id="export-produtos">📥 Exportar CSV</button>
-            <button class="primary" id="add-produto">+ Novo Produto</button>
+    const totalRepor = state.produtos.filter(p => statusEstoque(p).k !== 'ok').length;
+    const totalZero = state.produtos.filter(p => statusEstoque(p).k === 'zero').length;
+    const valorTotal = state.produtos.reduce((a,p)=>a + Number(p.estoque||0) * Number(p.preco||0),0);
+
+    const wrap = elFrag(`
+      <div class="page">
+        <div class="summary-strip">
+          <div class="summary-item"><span>Produtos</span><strong>${state.produtos.length}</strong></div>
+          <div class="summary-item ${totalRepor ? 'is-warn' : ''}"><span>Para repor</span><strong>${totalRepor}</strong></div>
+          <div class="summary-item ${totalZero ? 'is-danger' : ''}"><span>Sem estoque</span><strong>${totalZero}</strong></div>
+          <div class="summary-item"><span>Valor em estoque</span><strong>${fmtMoney(valorTotal)}</strong></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Catálogo de produtos</h3>
+            <div class="btn-group">
+              <button class="secondary" id="export-produtos">📥 Exportar CSV</button>
+              <button class="primary" id="add-produto">+ Novo produto</button>
+            </div>
           </div>
+          <div class="toolbar">
+            <div class="search"><input id="busca-produto" placeholder="Buscar por nome ou SKU…" value="${esc(state.buscaProduto)}"></div>
+            <select id="filtro-cat">
+              ${cats.map(c => `<option value="${esc(c)}" ${state.filtroCategoria===c?'selected':''}>${c==='todas'?'Todas as categorias':esc(c)}</option>`).join('')}
+            </select>
+            <select id="filtro-est">
+              <option value="todos" ${state.filtroEstoque==='todos'?'selected':''}>Todas as situações</option>
+              <option value="baixo" ${state.filtroEstoque==='baixo'?'selected':''}>Para repor</option>
+              <option value="zero" ${state.filtroEstoque==='zero'?'selected':''}>Sem estoque</option>
+            </select>
+            <span class="toolbar-count" id="produtos-count"></span>
+          </div>
+          <div id="produtos-table"></div>
         </div>
-        <div class="row-controls">
-          <input id="busca-produto" placeholder="🔍 Buscar por nome ou SKU..." style="max-width:300px;" value="${state.buscaProduto}">
-          <select id="filtro-cat" style="max-width:200px;">
-            ${cats.map(c => `<option value="${c}" ${state.filtroCategoria===c?'selected':''}>${c==='todas'?'Todas as Categorias':c}</option>`).join('')}
-          </select>
-        </div>
-        <div id="produtos-table"></div>
       </div>
     `);
-    content.appendChild(panel);
+    content.appendChild(wrap);
+    const panel = wrap;
 
     panel.querySelector('#add-produto').onclick = ()=>{ state.modal={type:'produto-form'}; render(); };
 
@@ -1437,35 +1500,41 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     panel.querySelector('#busca-produto').oninput = (e)=>{ state.buscaProduto=e.target.value; renderTable(); };
     panel.querySelector('#filtro-cat').onchange = (e)=>{ state.filtroCategoria=e.target.value; renderTable(); };
+    panel.querySelector('#filtro-est').onchange = (e)=>{ state.filtroEstoque=e.target.value; renderTable(); };
 
     function renderTable(){
       const box = panel.querySelector('#produtos-table');
+      const q = (state.buscaProduto||'').toLowerCase();
       const list = state.produtos.filter(p=> {
-        const matchBusca = !state.buscaProduto || p.nome.toLowerCase().includes(state.buscaProduto.toLowerCase()) || p.sku.toLowerCase().includes(state.buscaProduto.toLowerCase());
+        const matchBusca = !q || p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
         const matchCat = state.filtroCategoria === 'todas' || p.categoria === state.filtroCategoria;
-        return matchBusca && matchCat;
+        const k = statusEstoque(p).k;
+        const matchEst = state.filtroEstoque === 'todos' || (state.filtroEstoque === 'zero' ? k === 'zero' : k !== 'ok');
+        return matchBusca && matchCat && matchEst;
       });
+      panel.querySelector('#produtos-count').textContent = `${list.length} de ${state.produtos.length}`;
 
       if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📦</div>Nenhum produto encontrado com esse filtro.</div>`; return; }
       box.innerHTML = `
         <div class="table-scroll">
         <table>
-          <thead><tr><th>Material</th><th>SKU</th><th>Categoria</th><th>Estoque Atual</th><th>Mín. Exigido</th><th>Custo Unit.</th><th>Fornecedor</th><th>Ações</th></tr></thead>
-          <tbody>${list.map(p=>`
+          <thead><tr><th>Material</th><th>Categoria</th><th>Situação</th><th class="col-meter">Nível</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo unit.</th><th>Fornecedor</th><th class="col-actions">Ações</th></tr></thead>
+          <tbody>${list.map(p=>{ const st = statusEstoque(p); return `
             <tr>
-              <td style="font-weight:500;">${esc(p.nome)}</td>
-              <td class="mono dim">${esc(p.sku)}</td>
-              <td class="dim">${esc(p.categoria)}</td>
-              <td class="mono" style="${p.estoque <= p.quantidadeMinima ?'color:var(--danger); font-weight:bold;':''}">${p.estoque} <small class="dim">${p.unidade}</small></td>
-              <td class="mono dim">${p.quantidadeMinima} ${p.unidade}</td>
-              <td class="mono">${fmtMoney(p.preco)}</td>
+              <td><div class="cell-main">${esc(p.nome)}</div><div class="cell-sub mono">${esc(p.sku)}</div></td>
+              <td><span class="chip">${esc(p.categoria)}</span></td>
+              <td><span class="badge st-${st.k}">${st.label}</span></td>
+              <td class="col-meter">${medidorEstoque(p)}</td>
+              <td class="mono num ${st.k!=='ok'?'t-danger strong':''}">${p.estoque} <small class="dim">${esc(p.unidade)}</small></td>
+              <td class="mono num dim">${p.quantidadeMinima} ${esc(p.unidade)}</td>
+              <td class="mono num">${fmtMoney(p.preco)}</td>
               <td class="dim">${esc(p.fornecedor)||'—'}</td>
-              <td style="white-space:nowrap;">
+              <td class="col-actions">
                 <button class="icon-btn" data-act="editar" data-id="${p.id}">Editar</button>
                 <button class="icon-btn danger" data-act="excluir" data-id="${p.id}">Excluir</button>
               </td>
             </tr>
-          `).join('')}</tbody>
+          `; }).join('')}</tbody>
         </table>
         </div>
       `;
@@ -1498,25 +1567,25 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const panel = elFrag(`
       <div class="panel">
         <div class="panel-head">
-          <h3>Fila de Pedidos e Requisições</h3>
-          <button class="secondary" id="export-solicitacoes">📥 Exportar Relatório CSV</button>
+          <h3>Fila de pedidos e requisições</h3>
+          <button class="secondary" id="export-solicitacoes">📥 Exportar relatório CSV</button>
         </div>
 
-        <div class="status-tabs" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:16px;">
+        <div class="seg" role="tablist">
           ${ABAS_STATUS.map(a => `
-            <button class="status-tab-btn ${state.filtroStatus===a.valor?'active':''}" data-status="${a.valor}"
-              style="padding:8px 16px; border-radius:8px; border:1px solid ${state.filtroStatus===a.valor?'var(--amber)':'var(--border)'}; background:${state.filtroStatus===a.valor?'rgba(255,127,17,0.1)':'transparent'}; color:${state.filtroStatus===a.valor?'var(--amber)':'var(--text)'}; font-size:13px; font-weight:600; cursor:pointer;">
-              ${a.label} <span style="opacity:0.7;">(${contagens[a.valor]})</span>
+            <button class="status-tab-btn seg-${a.valor} ${state.filtroStatus===a.valor?'active':''}" role="tab" aria-selected="${state.filtroStatus===a.valor}" data-status="${a.valor}">
+              ${a.label} <span class="seg-count">${contagens[a.valor]}</span>
             </button>
           `).join('')}
         </div>
 
-        <div class="row-controls">
-          <input id="busca-sol" placeholder="🔍 Pesquisar por colaborador, email ou item..." style="max-width:300px;" value="${esc(state.buscaSolicitacao)}">
-          <select id="ordenacao" style="max-width:180px;">
-            <option value="recentes" ${state.ordenacao==='recentes'?'selected':''}>Mais Recentes</option>
-            <option value="urgencia" ${state.ordenacao==='urgencia'?'selected':''}>Maior Urgência</option>
+        <div class="toolbar">
+          <div class="search"><input id="busca-sol" placeholder="Buscar por colaborador, e-mail, setor ou item…" value="${esc(state.buscaSolicitacao)}"></div>
+          <select id="ordenacao">
+            <option value="recentes" ${state.ordenacao==='recentes'?'selected':''}>Mais recentes</option>
+            <option value="urgencia" ${state.ordenacao==='urgencia'?'selected':''}>Maior urgência</option>
           </select>
+          <span class="toolbar-count" id="sol-count"></span>
         </div>
         <div id="sol-table"></div>
       </div>
@@ -1536,11 +1605,9 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // Define quais ações fazem sentido a partir de cada status atual.
     function acoesDisponiveis(status){
-      if(status==='pendente')  return [{to:'aprovado', label:'Aprovar', cor:'var(--ok)'}, {to:'rejeitado', label:'Rejeitar', cor:'var(--danger)'}];
-      if(status==='aprovado')  return [{to:'entregue', label:'Marcar Entregue', cor:'var(--steel)'}, {to:'rejeitado', label:'Rejeitar', cor:'var(--danger)'}];
-      if(status==='rejeitado') return [{to:'pendente', label:'Reabrir Pedido', cor:'var(--amber)'}];
-      if(status==='entregue')  return [];
-      if(status==='cancelado') return [];
+      if(status==='pendente')  return [{to:'aprovado', label:'Aprovar', tone:'ok'}, {to:'rejeitado', label:'Rejeitar', tone:'danger'}];
+      if(status==='aprovado')  return [{to:'entregue', label:'Marcar entregue', tone:'steel'}, {to:'rejeitado', label:'Rejeitar', tone:'danger'}];
+      if(status==='rejeitado') return [{to:'pendente', label:'Reabrir pedido', tone:'amber'}];
       return [];
     }
 
@@ -1553,22 +1620,23 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         return matchBusca && s.status === state.filtroStatus;
       });
       list = [...list].sort((a,b)=> state.ordenacao==='urgencia' ? urgOrder[a.urgencia]-urgOrder[b.urgencia] : new Date(b.dataCriacao)-new Date(a.dataCriacao));
+      panel.querySelector('#sol-count').textContent = `${list.length} ${list.length===1?'pedido':'pedidos'}`;
 
       if(list.length===0){ box.innerHTML = `<div class="empty-state"><div class="glyph">📝</div>Nenhuma solicitação nesse status.</div>`; return; }
       box.innerHTML = `
         <div class="table-scroll">
         <table>
-          <thead><tr><th>Colaborador</th><th>Material / Descrição</th><th>Qtd</th><th>Urgência</th><th>Data</th><th>Ações / Gestão</th></tr></thead>
+          <thead><tr><th>Colaborador</th><th>Material / descrição</th><th class="num">Qtd</th><th>Urgência</th><th>Data</th><th class="col-actions">Ações</th></tr></thead>
           <tbody>${list.map(s=>`
-            <tr>
-              <td><strong>${esc(s.nome)}</strong><br><span class="email-cell">${esc(s.email)}</span></td>
+            <tr class="${s.urgencia==='alta' && s.status==='pendente' ? 'row-urgente' : ''}">
+              <td><div class="cell-main">${esc(s.nome)}</div><div class="cell-sub email-cell">${esc(s.email)}</div></td>
               <td>${formatarMateriaisCompacto(s)}</td>
-              <td class="mono" style="font-weight:bold;">${s.quantidade}</td>
+              <td class="mono num strong">${s.quantidade}</td>
               <td><span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span></td>
-              <td class="dim mono" style="font-size:11px;">${fmtDate(s.dataCriacao)}</td>
-              <td>
+              <td class="dim mono small">${fmtDate(s.dataCriacao)}</td>
+              <td class="col-actions">
                 <button class="icon-btn" data-act="detalhes" data-id="${s.id}">Ver</button>
-                ${acoesDisponiveis(s.status).map(a => `<button class="icon-btn" style="color:${a.cor}; border-color:${a.cor};" data-act="${a.to}" data-id="${s.id}">${a.label}</button>`).join('')}
+                ${acoesDisponiveis(s.status).map(a => `<button class="icon-btn tone-${a.tone}" data-act="${a.to}" data-id="${s.id}">${a.label}</button>`).join('')}
               </td>
             </tr>
           `).join('')}</tbody>
@@ -1594,46 +1662,93 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 
   function renderLogs(content){
+    if(state.buscaLog === undefined) state.buscaLog = '';
     const panel = elFrag(`
       <div class="panel">
         <div class="panel-head">
-          <h3>Histórico de Auditoria e Logs do Sistema</h3>
-          <button class="secondary" id="export-logs">📥 Exportar Logs CSV</button>
+          <div>
+            <h3>Histórico de auditoria</h3>
+            <p class="panel-sub">Registro das ações feitas neste painel, da mais recente para a mais antiga.</p>
+          </div>
+          <button class="secondary" id="export-logs">📥 Exportar logs CSV</button>
         </div>
         ${state.logs.length===0 ? `<div class="empty-state"><div class="glyph">📜</div>Nenhum registro de log encontrado.</div>` : `
-          <div class="table-scroll">
-          <table>
-            <thead><tr><th>Data / Hora</th><th>Administrador</th><th>Ação Realizada</th><th>Detalhes</th></tr></thead>
-            <tbody>${state.logs.map(l=>`
-              <tr>
-                <td class="mono dim" style="font-size:11.5px; white-space:nowrap;">${fmtDate(l.data)}</td>
-                <td><span class="badge" style="color:var(--steel); border-color:var(--border);">${esc(l.usuario)}</span></td>
-                <td style="font-weight:600; font-family:var(--font-mono); font-size:12px;">${esc(l.acao)}</td>
-                <td class="dim">${esc(l.detalhe)}</td>
-              </tr>
-            `).join('')}</tbody>
-          </table>
+          <div class="toolbar">
+            <div class="search"><input id="busca-log" placeholder="Buscar por ação, administrador ou detalhe…" value="${esc(state.buscaLog)}"></div>
+            <span class="toolbar-count" id="log-count"></span>
           </div>
+          <div id="log-table"></div>
         `}
       </div>
     `);
     panel.querySelector('#export-logs').onclick = () => exportarCSV(state.logs, 'Logs_Auditoria');
     content.appendChild(panel);
+    if(state.logs.length === 0) return;
+
+    function renderTable(){
+      const q = (state.buscaLog||'').toLowerCase();
+      const list = state.logs.filter(l => !q || [l.usuario, l.acao, l.detalhe].some(v => String(v||'').toLowerCase().includes(q)));
+      panel.querySelector('#log-count').textContent = `${list.length} de ${state.logs.length}`;
+      const box = panel.querySelector('#log-table');
+      if(list.length === 0){ box.innerHTML = `<div class="empty-state"><div class="glyph">🔍</div>Nenhum registro encontrado.</div>`; return; }
+      box.innerHTML = `
+        <div class="table-scroll">
+        <table>
+          <thead><tr><th>Data / hora</th><th>Administrador</th><th>Ação</th><th>Detalhes</th></tr></thead>
+          <tbody>${list.map(l=>`
+            <tr>
+              <td class="mono dim small nowrap">${fmtDate(l.data)}</td>
+              <td><span class="chip chip-steel">${esc(l.usuario)}</span></td>
+              <td><span class="chip chip-mono">${esc(l.acao)}</span></td>
+              <td class="dim">${esc(l.detalhe)}</td>
+            </tr>
+          `).join('')}</tbody>
+        </table>
+        </div>`;
+    }
+    panel.querySelector('#busca-log').oninput = (e)=>{ state.buscaLog = e.target.value; renderTable(); };
+    renderTable();
   }
 
   function renderConfig(content){
-    const panel = elFrag(`
-      <div class="panel" style="max-width:600px;">
-        <div class="panel-head"><h3>Configurações Globais</h3></div>
-        <div class="field">
-          <label>E-mail Responsável pelo Recebimento de Solicitações</label>
-          <input id="cfg-email" value="${esc(state.emailControle)}" placeholder="yuri.silva1@sgs.com">
+    const wrap = elFrag(`
+      <div class="page settings-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>📧 Notificações</h3>
+              <p class="panel-sub">Define quem recebe os avisos das novas solicitações.</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="cfg-email">E-mail responsável pelo recebimento de solicitações</label>
+            <input id="cfg-email" value="${esc(state.emailControle)}" placeholder="yuri.silva1@sgs.com">
+          </div>
+          <div class="form-actions">
+            <button class="primary" id="btn-salvar-cfg">Salvar alterações</button>
+          </div>
         </div>
-        <button class="primary" id="btn-salvar-cfg" style="margin-top:12px;">Salvar Alterações</button>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>👤 Sessão</h3>
+              <p class="panel-sub">Conta administrativa conectada neste navegador.</p>
+            </div>
+          </div>
+          <dl class="detail-grid">
+            <dt>E-mail</dt><dd class="mono break">${esc(state.session.user.email)}</dd>
+            <dt>Tema</dt><dd>${state.theme === 'dark' ? 'Escuro' : 'Claro'}</dd>
+          </dl>
+          <div class="form-actions">
+            <button class="secondary" id="btn-sair-cfg">🚪 Sair da conta</button>
+          </div>
+        </div>
       </div>
     `);
-    panel.querySelector('#btn-salvar-cfg').onclick = async () => {
-      const val = panel.querySelector('#cfg-email').value.trim();
+    wrap.querySelector('#btn-sair-cfg').onclick = logoutUser;
+    wrap.querySelector('#btn-salvar-cfg').onclick = async () => {
+      const val = wrap.querySelector('#cfg-email').value.trim();
       if(!val){ showToast('Informe um e-mail válido.'); return; }
       const { error } = await supabaseClient.from('config').upsert({ chave: 'email_controle', valor: val });
       if(error){ showToast('Erro ao salvar: ' + error.message); return; }
@@ -1642,7 +1757,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       showToast('Configurações salvas com sucesso!');
       render();
     };
-    content.appendChild(panel);
+    content.appendChild(wrap);
   }
 
   function renderModal(){
@@ -1652,24 +1767,31 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     if(m.type==='produto-form'){
       const p = m.produto || {};
       inner = `
-        <h3>${p.id ? 'Editar Produto / Estoque' : 'Cadastrar Novo Produto'}</h3>
-        <p class="modal-sub">Preencha as informações técnicas e os níveis do item.</p>
-        <div class="field"><label>Nome do Material / Descrição *</label><input id="m-nome" value="${esc(p.nome)}"></div>
+        <h3>${p.id ? 'Editar produto / estoque' : 'Cadastrar novo produto'}</h3>
+        <p class="modal-sub">Preencha as informações técnicas e os níveis do item. Campos com * são obrigatórios.</p>
+
+        <div class="form-section">Identificação</div>
+        <div class="field"><label>Nome do material / descrição *</label><input id="m-nome" value="${esc(p.nome)}"></div>
         <div class="field-row">
-          <div class="field"><label>SKU / Código *</label><input id="m-sku" value="${esc(p.sku)}"></div>
+          <div class="field"><label>SKU / código *</label><input id="m-sku" value="${esc(p.sku)}"></div>
           <div class="field"><label>Categoria *</label><input id="m-cat" value="${p.categoria ? esc(p.categoria) : 'EPIs'}"></div>
         </div>
+
+        <div class="form-section">Níveis de estoque</div>
         <div class="field-row">
-          <div class="field"><label>Quantidade / Estoque Atual *</label><input id="m-qtd" type="number" min="0" value="${p.estoque !== undefined ? p.estoque : 25}"></div>
-          <div class="field"><label>Estoque Mínimo (Alerta) *</label><input id="m-min" type="number" min="0" value="${p.quantidadeMinima || 5}"></div>
+          <div class="field"><label>Estoque atual *</label><input id="m-qtd" type="number" min="0" value="${p.estoque !== undefined ? p.estoque : 25}"></div>
+          <div class="field"><label>Estoque mínimo (alerta) *</label><input id="m-min" type="number" min="0" value="${p.quantidadeMinima || 5}"></div>
         </div>
+
+        <div class="form-section">Custo e fornecedor</div>
         <div class="field-row">
-          <div class="field"><label>Preço Unitário (R$)</label><input id="m-preco" type="number" step="0.01" min="0" value="${p.preco || 35.0}"></div>
+          <div class="field"><label>Preço unitário (R$)</label><input id="m-preco" type="number" step="0.01" min="0" value="${p.preco || 35.0}"></div>
           <div class="field"><label>Fornecedor</label><input id="m-forn" value="${p.fornecedor ? esc(p.fornecedor) : 'Suprimentos Corporativos'}"></div>
         </div>
+
         <div class="modal-actions">
           <button class="secondary" id="modal-cancel">Cancelar</button>
-          <button class="primary" id="modal-save">Salvar Produto</button>
+          <button class="primary" id="modal-save">Salvar produto</button>
         </div>
       `;
     } else if(m.type==='confirmar-exclusao'){
@@ -1712,7 +1834,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       inner = `
         <h3>Resumo de Capital Imobilizado</h3>
         <p class="modal-sub">Valuation atual do almoxarifado baseado nos estoques do banco de dados.</p>
-        <div style="font-size:32px; font-family:var(--font-display); font-weight:bold; color:var(--steel); margin:20px 0;">${fmtMoney(valorTotal)}</div>
+        <div class="big-number">${fmtMoney(valorTotal)}</div>
         <p class="dim" style="font-size:13px;">Total de <strong>${state.produtos.length}</strong> SKUs monitorados em tempo real.</p>
         <div class="modal-actions">
           <button class="primary" id="modal-cancel">Fechar</button>
@@ -1723,80 +1845,62 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       const itens = s.itens || [];
       const mailtoLink = buildMailto(s.email, `[SUPRIMENTOS] Atualização sobre sua solicitação (${s.item})`, `Olá ${s.nome},\n\nSua solicitação do item "${s.item}" (Quantidade: ${s.quantidade}) encontra-se com status: ${s.status.toUpperCase()}.\n\nAtenciosamente,\nAlmoxarifado BackOffice`);
 
-      const secaoTitulo = (texto) => `<div style="font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin:20px 0 10px; padding-top:16px; border-top:1px solid var(--border);">${texto}</div>`;
+      const semEstoqueAlgum = itens.some(it => it.disponivel === false);
 
       inner = `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-          <h3 style="margin:0;">Detalhes da Requisição</h3>
-          <div style="display:flex; gap:8px;">
+        <div class="modal-head">
+          <div>
+            <h3>Detalhes da requisição</h3>
+            <p class="modal-sub">Pedido de ${fmtDate(s.dataCriacao)}</p>
+          </div>
+          <div class="btn-group">
             <span class="badge urg-${esc(s.urgencia)}">${esc(s.urgencia).toUpperCase()}</span>
             <span class="badge ${esc(s.status)}">${esc(s.status).toUpperCase()}</span>
           </div>
         </div>
-        <p class="modal-sub">Pedido de ${fmtDate(s.dataCriacao)}</p>
 
-        <div style="margin:0 0 4px; font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim);">Solicitante</div>
+        <div class="form-section">Solicitante</div>
         <dl class="detail-grid">
           <dt>Nome</dt><dd>${esc(s.nome)}</dd>
-          <dt>E-mail</dt><dd><a href="${esc(mailtoLink)}" style="color:var(--steel); text-decoration:underline;">${esc(s.email)} ✉️</a></dd>
+          <dt>E-mail</dt><dd><a class="link" href="${esc(mailtoLink)}">${esc(s.email)} ✉️</a></dd>
           <dt>Matrícula</dt><dd>${esc(s.matricula) || '—'}</dd>
-          <dt>Setor / Centro</dt><dd>${esc(s.setor) || '—'} (${esc(s.centroCusto) || '—'})</dd>
+          <dt>Setor / centro</dt><dd>${esc(s.setor) || '—'} (${esc(s.centroCusto) || '—'})</dd>
         </dl>
 
-        ${secaoTitulo('Materiais Solicitados')}
-        ${(itens.some(it => it.disponivel === false)) ? `
-          <div style="background:rgba(255,63,0,0.1); border:1px solid var(--danger); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:var(--danger); font-weight:600;">
-            ⚠️ Este pedido tem item(ns) sem estoque no momento — compra urgente necessária.
-          </div>
-        ` : ''}
+        <div class="form-section">Materiais solicitados</div>
+        ${semEstoqueAlgum ? `<div class="alert-box">⚠️ Este pedido tem item(ns) sem estoque no momento — compra urgente necessária.</div>` : ''}
         ${itens.length > 0 ? `
           <div class="table-scroll">
-          <table style="width:100%; border-collapse:collapse; font-size:13px;">
-            <thead>
-              <tr>
-                <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Material</th>
-                <th style="text-align:left; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">SKU</th>
-                <th style="text-align:right; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Qtd.</th>
-                <th style="text-align:center; padding:6px 8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; border-bottom:1px solid var(--border);">Disponibilidade</th>
-              </tr>
-            </thead>
+          <table class="table-compact">
+            <thead><tr><th>Material</th><th>SKU</th><th class="num">Qtd.</th><th>Disponibilidade</th></tr></thead>
             <tbody>
               ${itens.map(it => {
                 const semEstoque = it.disponivel === false;
                 return `
-                <tr style="${semEstoque ? 'background:rgba(255,63,0,0.06);' : ''}">
-                  <td style="padding:8px; border-bottom:1px solid var(--border); ${semEstoque ? 'color:var(--danger); font-weight:600;' : ''}">${esc(it.nome)}${it.categoria ? `<br><span class="dim" style="font-size:11px;">${esc(it.categoria)}</span>` : ''}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);" class="mono dim">${esc(it.sku)}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border); text-align:right; font-weight:700;" class="mono">${it.quantidade}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">
-                    ${semEstoque
-                      ? `<span class="badge" style="color:var(--danger); border-color:var(--danger); background:rgba(255,63,0,0.1);">🔴 SEM ESTOQUE</span>`
-                      : `<span class="badge" style="color:var(--ok); border-color:var(--ok); background:rgba(16,185,129,0.1);">✅ Reservado</span>`}
-                  </td>
-                </tr>
-              `;}).join('')}
+                <tr class="${semEstoque ? 'row-sem-estoque' : ''}">
+                  <td><div class="cell-main ${semEstoque ? 't-danger' : ''}">${esc(it.nome)}</div>${it.categoria ? `<div class="cell-sub">${esc(it.categoria)}</div>` : ''}</td>
+                  <td class="mono dim">${esc(it.sku)}</td>
+                  <td class="mono num strong">${it.quantidade}</td>
+                  <td>${semEstoque ? `<span class="badge st-zero">Sem estoque</span>` : `<span class="badge st-ok">Reservado</span>`}</td>
+                </tr>`;}).join('')}
             </tbody>
             <tfoot>
-              <tr>
-                <td colspan="2" style="padding:8px; text-align:right; color:var(--text-dim); font-family:var(--font-mono); font-size:11px;">TOTAL</td>
-                <td style="padding:8px; text-align:right; font-weight:700; color:var(--amber);" class="mono">${s.quantidade}</td>
-                <td></td>
-              </tr>
+              <tr><td colspan="2" class="num dim">TOTAL</td><td class="mono num strong t-accent">${s.quantidade}</td><td></td></tr>
             </tfoot>
           </table>
           </div>
         ` : `
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px;">
-            <strong style="color:var(--amber);">${esc(s.item)}</strong>
-            <div class="dim" style="font-size:11.5px; margin-top:2px;">Item personalizado (fora do catálogo) · Quantidade: ${s.quantidade}</div>
+          <div class="info-box">
+            <strong class="t-accent">${esc(s.item)}</strong>
+            <div class="dim small">Item personalizado (fora do catálogo) · Quantidade: ${s.quantidade}</div>
           </div>
         `}
 
-        ${secaoTitulo('Endereço de Entrega')}
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">📍 ${esc(s.endereco) || 'Não informado.'}</div>
+        <div class="form-section">Endereço de entrega</div>
+        <div class="info-box">📍 ${esc(s.endereco) || 'Não informado.'}</div>
 
-        ${secaoTitulo('Observações')}
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; color:var(--text);">${esc(s.motivo) || 'Nenhuma observação informada.'}</div>
+        <div class="form-section">Observações</div>
+        <div class="info-box">${esc(s.motivo) || 'Nenhuma observação informada.'}</div>
 
         <div class="modal-actions">
           <button class="primary" id="modal-cancel">Fechar</button>
