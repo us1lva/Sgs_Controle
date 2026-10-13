@@ -429,10 +429,11 @@ tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--amber);}
 @keyframes mx-drift-b{to{transform:translate(-14vw,-10vh) scale(1.22);}}
 @keyframes mx-drift-c{to{transform:translate(-20vw,14vh) scale(.82);}}
 
-/* O app fica acima do fundo; superfícies em "vidro" deixam a luz passar. */
+/* O app fica sempre acima do fundo. Painéis, cards e sidebar são SÓLIDOS
+   (como no CSS original): o fundo aparece nas margens e nos vãos, nunca
+   atrás de texto ou tabelas. */
 #app{position:relative; z-index:1;}
-.sidebar, .panel, .stat-card{background:color-mix(in srgb, var(--panel) 84%, transparent);}
-@media (max-width:860px){ .sidebar{background:color-mix(in srgb, var(--panel) 96%, transparent);} }
+.topbar{background:color-mix(in srgb, var(--bg) 97%, transparent);}
 
 /* ---------- Faixas zebradas em movimento (fita de galpão) ----------
    O deslocamento = 1 período horizontal da listra (período × √2),
@@ -556,6 +557,6 @@ button.primary:hover::after{transform:translateX(120%); transition:transform .7s
 /* Modo leve: ativado sozinho pelo JS se a máquina não sustentar os efeitos */
 .mx-lite .mx-bg i, .mx-lite .stat-card .mx-ring, .mx-lite .chart-fill, .mx-lite .badge.urg-alta, .mx-lite .brand::before{animation:none;}
 .mx-lite .mx-bg{transition:none;}
-.mx-lite .topbar{-webkit-backdrop-filter:none; backdrop-filter:none; background:var(--bg);}
+.mx-lite .topbar{-webkit-backdrop-filter:none; backdrop-filter:none;}
 
 @media (prefers-reduced-motion: reduce){ .mx-bg i{animation:none;} .mx-hold{opacity:1; translate:none;} }
