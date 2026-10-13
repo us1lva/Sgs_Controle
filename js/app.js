@@ -20,6 +20,11 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   function montar(){
     if(document.querySelector('.mx-bg')) return;
 
+    // Garante a ordem de empilhamento mesmo se o CSS novo não carregar:
+    // o fundo (z-index 0) sempre fica ATRÁS do app (z-index 1).
+    const appEl = document.getElementById('app');
+    if(appEl){ appEl.style.position = 'relative'; appEl.style.zIndex = '1'; }
+
     wrapBg = document.createElement('div');
     wrapBg.className = 'mx-bg';
     wrapBg.setAttribute('aria-hidden', 'true');
@@ -912,6 +917,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 
   function posRender(){
+    app.style.position = 'relative'; app.style.zIndex = '1';   // conteúdo sempre acima do fundo
     let chave;
     if(!state.loaded) chave = 'load';
     else if(state.recuperandoSenha) chave = 'recup';
