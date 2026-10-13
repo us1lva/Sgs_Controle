@@ -821,3 +821,179 @@ tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--amber);}
   .topbar .theme-btn{padding:8px 12px;}
   .sidebar{border-color:transparent;}
 }
+
+
+/* =====================================================================
+   POLIMENTO VISUAL — top bar mais elegante e fundo suave
+   Overrides finais para preservar a estrutura e as funções existentes.
+   ===================================================================== */
+:root{
+  --bg:#17181B;
+  --panel:#202125;
+  --panel-2:#28292E;
+  --border:#34363D;
+  --field:#191A1E;
+  --text:#F2F1EF;
+  --text-dim:#A5A7AE;
+  --on-bg:#F3F1ED;
+  --on-bg-dim:rgba(243,241,237,.68);
+  --on-bg-line:rgba(243,241,237,.12);
+  --grid:rgba(255,255,255,.025);
+  --shadow:0 1px 0 rgba(255,255,255,.035) inset, 0 14px 36px rgba(0,0,0,.18);
+}
+
+[data-theme="light"]{
+  --bg:#F4F2EE;
+  --panel:#FFFEFC;
+  --panel-2:#F7F4EF;
+  --border:#E4DED5;
+  --field:#FFFFFF;
+  --text:#292723;
+  --text-dim:#79756E;
+  --on-bg:#292723;
+  --on-bg-dim:rgba(41,39,35,.65);
+  --on-bg-line:rgba(41,39,35,.12);
+  --grid:rgba(91,69,44,.025);
+  --shadow:0 1px 0 rgba(255,255,255,.85) inset, 0 12px 30px rgba(56,44,28,.08);
+}
+
+/* Fundo sem a malha forte: apenas halos quentes, bem discretos. */
+body{
+  background-color:var(--bg);
+  background-image:
+    radial-gradient(ellipse at 12% 4%, rgba(244,121,32,.095), transparent 38%),
+    radial-gradient(ellipse at 88% 78%, rgba(211,155,111,.055), transparent 36%);
+  background-size:auto;
+  background-attachment:fixed;
+}
+[data-theme="light"] body{
+  background-image:
+    radial-gradient(ellipse at 12% 4%, rgba(244,121,32,.075), transparent 40%),
+    radial-gradient(ellipse at 90% 78%, rgba(195,158,121,.065), transparent 38%);
+}
+
+.mx-bg{
+  translate:none !important;
+  transition:none !important;
+}
+.mx-bg i{will-change:auto; animation:none !important;}
+.mx-bg i:nth-child(1){
+  top:-24vmax; left:-18vmax;
+  background:radial-gradient(circle, rgba(244,121,32,.075), transparent 68%);
+}
+.mx-bg i:nth-child(2){
+  bottom:-26vmax; right:-20vmax;
+  background:radial-gradient(circle, rgba(222,166,124,.055), transparent 70%);
+}
+.mx-bg i:nth-child(3){display:none;}
+#mx-canvas{display:none !important;}
+
+/* Top bar em vidro fosco, com bom contraste e espaçamento consistente. */
+.topbar{
+  position:sticky;
+  top:10px;
+  z-index:20;
+  margin:0 10px 4px;
+  padding:18px 22px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:14px;
+  background:color-mix(in srgb, var(--panel) 88%, transparent);
+  border:1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-bottom:1px solid var(--border);
+  border-radius:18px;
+  box-shadow:0 10px 28px rgba(0,0,0,.075);
+  -webkit-backdrop-filter:blur(18px) saturate(125%);
+  backdrop-filter:blur(18px) saturate(125%);
+}
+.topbar-title{gap:14px; flex:1 1 auto; min-width:0;}
+.topbar-title > div{min-width:0;}
+.topbar h2{
+  display:flex;
+  align-items:center;
+  color:var(--text);
+  font-size:clamp(22px, 2vw, 28px);
+  font-weight:700;
+  letter-spacing:-.035em;
+  line-height:1.15;
+}
+.topbar h2::before{
+  content:"";
+  display:inline-block;
+  flex:0 0 8px;
+  width:8px;
+  height:8px;
+  margin:0 11px 1px 0;
+  border-radius:50%;
+  background:var(--amber);
+  box-shadow:0 0 0 4px rgba(244,121,32,.11);
+}
+.topbar p{
+  margin:6px 0 0 19px;
+  color:var(--text-dim);
+  font-size:13.5px;
+  line-height:1.45;
+  max-width:64ch;
+}
+.topbar .theme-btn,
+.topbar .menu-toggle-btn{
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-height:40px;
+  padding:9px 14px;
+  color:var(--text);
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:11px;
+  box-shadow:0 2px 7px rgba(0,0,0,.055);
+  white-space:nowrap;
+}
+.topbar .theme-btn:hover,
+.topbar .menu-toggle-btn:hover{
+  color:var(--text);
+  border-color:color-mix(in srgb, var(--amber) 46%, var(--border));
+  background:color-mix(in srgb, var(--panel-2) 88%, var(--amber) 12%);
+  transform:translateY(-1px);
+}
+.content{padding:24px 18px 34px;}
+
+/* Retira a sensação de excesso de efeitos; o destaque fica no conteúdo. */
+.brand::before,
+.chart-fill,
+.badge.urg-alta,
+.login-box::before{animation:none !important;}
+.login-box::before{
+  height:5px;
+  border-radius:0;
+  background:linear-gradient(90deg, #E96F19, #F7B27B);
+}
+.stat-card:hover{transform:translateY(-3px);}
+.stat-card .mx-spot{opacity:.55;}
+.stat-card .label,
+.stat-card .value{text-shadow:none !important;}
+
+@media (max-width:860px){
+  .topbar{
+    top:0;
+    margin:0 10px;
+    padding:15px 16px;
+    border-radius:0 0 16px 16px;
+    gap:12px;
+  }
+  .topbar-title{flex-basis:100%; gap:10px;}
+  .topbar h2{font-size:21px;}
+  .topbar p{margin:5px 0 0 19px; font-size:12.5px;}
+  .topbar .theme-btn{min-height:38px; margin-left:auto;}
+  .content{padding:20px 16px 28px;}
+}
+
+@media (max-width:420px){
+  .topbar{padding:13px 12px;}
+  .topbar-title{align-items:flex-start;}
+  .topbar h2{font-size:19px;}
+  .topbar p{font-size:12px;}
+  .topbar .theme-btn{font-size:12px; padding:8px 10px;}
+}
