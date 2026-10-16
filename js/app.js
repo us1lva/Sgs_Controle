@@ -982,6 +982,8 @@ function bindModalCorreio(overlay, m){
     state.solicitacoes = solicitacoes;
     state.logs = logs;
     state.emailControle = emailControle;
+    state.correios = await carregarCorreios();
+    garantirRealtimeCorreios();
     garantirRealtime();
   }
 
@@ -1219,6 +1221,7 @@ function bindModalCorreio(overlay, m){
           ${navItem('dashboard', '📊', 'Dashboard')}
           ${navItem('solicitacoes', '📝', 'Solicitações', pendentes, 'warn')}
           ${navItem('produtos', '📦', 'Produtos', qtdRepor, 'danger')}
+          ${navItem('correios', '✉️', 'Correios', state.correios.filter(c => c.status === 'pendente').length, 'warn')}
         </nav>
 
         <nav class="nav-group">
@@ -1251,6 +1254,7 @@ function bindModalCorreio(overlay, m){
     const titles = {
       dashboard:['Visão Geral','Panorama do estoque e métricas operacionais'],
       produtos:['Inventário','Gerencie o catálogo de produtos do banco de dados'],
+      correios:['Controle de Correio','Envios aprovados e entregues, em sincronia com a planilha'],
       solicitacoes:['Fila de Pedidos','Analise, aprova e acompanhe as requisições'],
       logs:['Auditoria e Histórico','Registro das últimas ações realizadas neste painel'],
       config:['Configurações do Sistema','Preferências globais de e-mail e parâmetros'],
@@ -1307,6 +1311,7 @@ function bindModalCorreio(overlay, m){
 
     if(state.tab==='dashboard') renderDashboard(content);
     else if(state.tab==='produtos') renderProdutos(content);
+    else if(state.tab==='correios') renderCorreios(content);
     else if(state.tab==='solicitacoes') renderSolicitacoes(content);
     else if(state.tab==='logs') renderLogs(content);
     else if(state.tab==='config') renderConfig(content);
@@ -2090,6 +2095,7 @@ function bindModalCorreio(overlay, m){
         </div>
       `;
     }
+      else if(m.type.startsWith('correio')){ inner = modalCorreioHtml(m); }
 
     const overlay = elFrag(`<div class="overlay"><div class="modal">${inner}</div></div>`);
     overlay.onclick = (e)=>{ if(e.target===overlay){ state.modal=null; render(); } };
@@ -2132,6 +2138,7 @@ function bindModalCorreio(overlay, m){
 
     const exportarComprasBtn = overlay.querySelector('#modal-exportar-compras');
     if(exportarComprasBtn) exportarComprasBtn.onclick = exportarListaCompras;
+    if(m.type.startsWith('correio')) bindModalCorreio(overlay, m);
 
     app.appendChild(overlay);
   }
