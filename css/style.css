@@ -1230,3 +1230,39 @@ tbody tr{height:auto;}
   .content-dashboard .table-scroll{max-height:150px;}
   .content-dashboard .dashboard-2col > .panel,.content-dashboard > .page > .panel{padding:11px;}
 }
+/* =====================================================================
+   ABA CORREIOS — cole no FIM do style.css (depois do bloco "LAYOUT COMPACTO").
+   Reaproveita os componentes existentes (summary-strip, toolbar, panel,
+   badge, chip, icon-btn, modal). Só acrescenta o que é específico da aba.
+   ===================================================================== */
+.content-correios .summary-strip{grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin-bottom:12px;}
+.content-correios .summary-item{padding:9px 13px; gap:1px; border-radius:11px;}
+.content-correios .summary-item span{font-size:10.5px;}
+.content-correios .summary-item strong{font-size:20px; line-height:1.2;}
+.content-correios .panel{padding:14px;}
+.content-correios .panel-head{margin-bottom:10px;}
+.content-correios .toolbar{display:grid; grid-template-columns:minmax(180px,1.5fr) minmax(135px,1fr) minmax(135px,1fr) auto; align-items:center;}
+.content-correios .search{max-width:none; min-width:0;}
+.content-correios .toolbar select{min-width:0; width:100%;}
+.content-correios #correio-table .table-scroll{max-height:calc(100vh - 335px); min-height:150px;}
+.content-correios #correio-table table{min-width:1100px;}
+.content-correios .col-end{min-width:220px; max-width:320px; white-space:normal; line-height:1.35;}
+
+/* Formulário do modal: campo de erro dentro da janela e textarea compacta */
+.modal textarea{min-height:56px;}
+.modal input[type="file"]{padding:8px 10px;}
+
+@media (max-width:1080px){
+  .content-correios .toolbar{grid-template-columns:minmax(180px,1fr) minmax(130px,1fr) minmax(130px,1fr);}
+  .content-correios .toolbar-count{grid-column:1/-1; margin:0;}
+}
+@media (max-width:860px){
+  .content-correios .summary-strip{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .content-correios .toolbar{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .content-correios .toolbar .search{grid-column:1/-1;}
+  .content-correios #correio-table .table-scroll{max-height:60vh;}
+}
+@media (max-width:520px){
+  .content-correios .toolbar{grid-template-columns:1fr;}
+  .content-correios .toolbar .search{grid-column:auto;}
+}
