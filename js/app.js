@@ -67,6 +67,466 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   document.documentElement.setAttribute('data-theme', state.theme);
 
+  // =====================================================================
+// ABA "CORREIOS" — cole este bloco INTEIRO dentro do app.js, logo depois
+// da linha:  document.documentElement.setAttribute('data-theme', state.theme);
+// (ainda dentro do  (function(){ ... })();  principal).
+// As 5 pequenas edições no restante do arquivo estão no PASSO-A-PASSO.md.
+// =====================================================================
+
+Object.assign(state, {
+  correios: [],
+  buscaCorreio: '',
+  filtroCorreio: 'todos',        // todos | pendente | concluido
+  filtroOrigemCorreio: 'todas',  // todas | sistema | manual | importado
+});
+
+const CORREIO_ORIGEM = { sistema: 'Sistema', manual: 'Manual', importado: 'Importado' };
+
+// ---------- Conversões ------------------------------------------------
+function mapCorreio(r){
+  return {
+    id: r.id, solicitacaoId: r.solicitacao_id,
+    inspetor: r.inspetor || '', centroCusto: r.centro_custo || '', endereco: r.endereco || '',
+    cap: r.cap || '', dataEnvio: r.data_envio || '', rastreio: r.rastreio || '',
+    tipo: r.tipo || '', status: r.status || 'pendente', responsavel: r.responsavel || '',
+    anexo1: r.anexo1 || '', anexo2: r.anexo2 || '', previsao: r.previsao_entrega || '',
+    origem: r.origem || 'manual'
+  };
+}
+function correioParaBanco(c){
+  const vazio = v => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim();
+  return {
+    inspetor: String(c.inspetor || '').trim(),
+    centro_custo: vazio(c.centroCusto), endereco: vazio(c.endereco), cap: vazio(c.cap),
+    data_envio: vazio(c.dataEnvio), rastreio: vazio(c.rastreio), tipo: vazio(c.tipo),
+    status: c.status === 'concluido' ? 'concluido' : 'pendente',
+    responsavel: vazio(c.responsavel), anexo1: vazio(c.anexo1), anexo2: vazio(c.anexo2),
+    previsao_entrega: vazio(c.previsao)
+  };
+}
+// "2026-07-14" -> "14/07/2026" (sem passar por Date, para não mudar o dia por fuso)
+function fmtDia(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || '—');
+}
+// "yuri.silva1@sgs.com" -> "Yuri Silva"
+function nomeDoEmail(email){
+  const local = String(email || '').split('@')[0].replace(/[0-9]+/g, '');
+  return local.split(/[._-]+/).filter(Boolean).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+// ---------- Banco de dados --------------------------------------------
+async function carregarCorreios(){
+  const { data, error } = await supabaseClient.from('correios').select('*')
+    .order('data_envio', { ascending: false, nullsFirst: false })
+    .order('criado_em', { ascending: false })
+    .range(0, 4999);
+  if(error){ console.error(error); return []; }
+  return (data || []).map(mapCorreio);
+}
+
+// Estas funções devolvem uma mensagem de erro (ou null). Quem chama decide o aviso,
+// porque showToast() redesenha a tela e apagaria o formulário aberto.
+async function addCorreio(c, origem){
+  const { error } = await supabaseClient.from('correios').insert({ ...correioParaBanco(c), origem: origem || 'manual' });
+  if(error) return error.message;
+  state.correios = await carregarCorreios();
+  await addLog('CORREIO_ADICIONAR', `Envio de "${c.inspetor}" adicionado manualmente.`);
+  return null;
+}
+async function updateCorreio(id, c){
+  const { error } = await supabaseClient.from('correios')
+    .update({ ...correioParaBanco(c), atualizado_em: new Date().toISOString() }).eq('id', id);
+  if(error) return error.message;
+  state.correios = await carregarCorreios();
+  await addLog('CORREIO_ATUALIZAR', `Envio de "${c.inspetor}" atualizado.`);
+  return null;
+}
+async function deleteCorreio(item){
+  const { error } = await supabaseClient.from('correios').delete().eq('id', item.id);
+  if(error) return error.message;
+  state.correios = await carregarCorreios();
+  await addLog('CORREIO_EXCLUIR', `Envio de "${item.inspetor}" removido.`);
+  return null;
+}
+async function importarCorreios(linhas){
+  const registros = linhas.map(l => ({ ...correioParaBanco(l), origem: 'importado' }));
+  for(let i = 0; i < registros.length; i += 200){
+    const { error } = await supabaseClient.from('correios').insert(registros.slice(i, i + 200));
+    if(error) return `Falha na linha ${i + 1} em diante: ${error.message}`;
+  }
+  state.correios = await carregarCorreios();
+  await addLog('CORREIO_IMPORTAR', `${registros.length} envio(s) importado(s) de planilha.`);
+  return null;
+}
+
+let realtimeCorreios = false, timerCorreios = null;
+function garantirRealtimeCorreios(){
+  if(realtimeCorreios) return;
+  realtimeCorreios = true;
+  supabaseClient.channel('admin-correios').on('postgres_changes', { event: '*', schema: 'public', table: 'correios' }, () => {
+    clearTimeout(timerCorreios);                       // uma importação grande gera muitos eventos
+    timerCorreios = setTimeout(async () => {
+      state.correios = await carregarCorreios();
+      if(!state.modal) render();                       // não apaga um formulário aberto
+    }, 400);
+  }).subscribe();
+}
+
+// ---------- Leitura da planilha .xlsx ---------------------------------
+function normCabecalho(s){
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+const CORREIO_CABECALHOS = {
+  inspetor: 'inspetor', cc: 'centroCusto', centrodecusto: 'centroCusto', endereco: 'endereco', cap: 'cap',
+  data: 'dataEnvio', nderatreio: 'rastreio', nderastreio: 'rastreio', rastreio: 'rastreio',
+  tipo: 'tipo', status: 'status', responsavel: 'responsavel',
+  anexos1: 'anexo1', anexo1: 'anexo1', anexo2: 'anexo2',
+  previsaodeentrega: 'previsao', previsao: 'previsao'
+};
+function textoCelula(v){
+  if(v === null || v === undefined) return '';
+  if(v instanceof Date) return v.toISOString().slice(0, 10);
+  if(typeof v === 'object'){
+    if(Array.isArray(v.richText)) return v.richText.map(t => t.text).join('').trim();
+    if(v.text !== undefined) return textoCelula(v.text);          // célula com hiperlink (ex.: CAP)
+    if(v.result !== undefined) return textoCelula(v.result);      // célula com fórmula
+    if(v.hyperlink) return String(v.hyperlink);
+    return '';
+  }
+  return String(v).trim();
+}
+function dataParaISO(v){
+  if(v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = textoCelula(v);
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s);
+  if(m){ const a = m[3].length === 2 ? '20' + m[3] : m[3]; return `${a}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+  return '';
+}
+function chaveCorreio(c){
+  const r = String(c.rastreio || '').replace(/\s+/g, '').toLowerCase();
+  return r ? 'r:' + r : `o:${String(c.inspetor).toLowerCase()}|${String(c.endereco).toLowerCase()}|${c.dataEnvio}`;
+}
+// Lê TODAS as abas que tenham a linha de cabeçalho com "INSPETOR" (ex.: 2026 e 2025).
+async function lerPlanilhaCorreios(file){
+  if(typeof ExcelJS === 'undefined') throw new Error('biblioteca de planilha não carregada — recarregue a página.');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  const folhas = [];
+  wb.worksheets.forEach(ws => {
+    let linhaCab = 0;
+    for(let r = 1; r <= Math.min(ws.rowCount, 10) && !linhaCab; r++){
+      ws.getRow(r).eachCell(cell => { if(normCabecalho(textoCelula(cell.value)) === 'inspetor') linhaCab = r; });
+    }
+    if(!linhaCab) return;
+    const colunas = {};
+    ws.getRow(linhaCab).eachCell((cell, col) => {
+      const k = CORREIO_CABECALHOS[normCabecalho(textoCelula(cell.value))];
+      if(k && !colunas[k]) colunas[k] = col;
+    });
+    const linhas = [];
+    for(let r = linhaCab + 1; r <= ws.rowCount; r++){
+      const row = ws.getRow(r), reg = {};
+      Object.entries(colunas).forEach(([k, col]) => {
+        const v = row.getCell(col).value;
+        reg[k] = k === 'dataEnvio' ? dataParaISO(v) : textoCelula(v);
+      });
+      if(!reg.inspetor && !reg.endereco && !reg.rastreio) continue;     // linha vazia formatada
+      if(!reg.inspetor) reg.inspetor = '(sem nome)';
+      reg.status = normCabecalho(reg.status).startsWith('conclu') ? 'concluido' : 'pendente';
+      linhas.push(reg);
+    }
+    folhas.push({ nome: ws.name, linhas });
+  });
+  return folhas;
+}
+
+// ---------- Exportação (mesmas colunas da planilha) --------------------
+async function exportarCorreios(){
+  const lista = [...state.correios].sort((a, b) => String(a.dataEnvio).localeCompare(String(b.dataEnvio)));
+  const colunas = [
+    { header: 'INSPETOR', key: 'inspetor', width: 28 }, { header: 'C.C', key: 'cc', width: 10 },
+    { header: 'ENDEREÇO', key: 'endereco', width: 52 }, { header: 'CAP', key: 'cap', width: 12 },
+    { header: 'DATA', key: 'data', width: 13 }, { header: 'Nº DE RATREIO', key: 'rastreio', width: 22 },
+    { header: 'TIPO', key: 'tipo', width: 12 }, { header: 'STATUS', key: 'status', width: 14 },
+    { header: 'RESPONSÁVEL', key: 'responsavel', width: 18 }, { header: 'ANEXOS 1', key: 'anexo1', width: 22 },
+    { header: 'ANEXO 2', key: 'anexo2', width: 22 }, { header: 'PREVISÃO DE ENTREGA', key: 'previsao', width: 22 },
+  ];
+  const linhas = lista.map(c => ({
+    inspetor: c.inspetor, cc: c.centroCusto, endereco: c.endereco, cap: c.cap, data: fmtDia(c.dataEnvio),
+    rastreio: c.rastreio, tipo: c.tipo, status: c.status === 'concluido' ? 'concluído' : 'aguardando envio',
+    responsavel: c.responsavel, anexo1: c.anexo1, anexo2: c.anexo2, previsao: c.previsao
+  }));
+  await exportarExcelFormatado('Controle de Correio', colunas, linhas, 'Controle_de_Correio');
+}
+
+// ---------- Tela ------------------------------------------------------
+function renderCorreios(content){
+  const total = state.correios.length;
+  const pend = state.correios.filter(c => c.status === 'pendente').length;
+  const conc = total - pend;
+  const manuais = state.correios.filter(c => c.origem !== 'sistema').length;
+
+  const wrap = elFrag(`
+    <div class="page">
+      <div class="summary-strip">
+        <div class="summary-item"><span>Registros</span><strong>${total}</strong></div>
+        <div class="summary-item ${pend ? 'is-warn' : ''}"><span>Aguardando envio</span><strong>${pend}</strong></div>
+        <div class="summary-item"><span>Concluídos</span><strong>${conc}</strong></div>
+        <div class="summary-item"><span>Manuais e importados</span><strong>${manuais}</strong></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Envios pelos Correios</h3>
+            <p class="panel-sub">Pedidos aprovados ou entregues entram aqui sozinhos. Tudo que for alterado nesta tela é enviado para a planilha.</p>
+          </div>
+          <div class="btn-group">
+            <button class="secondary" id="correio-export">📥 Baixar Excel</button>
+            <button class="secondary" id="correio-import">📤 Importar planilha</button>
+            <button class="primary" id="correio-add">+ Adicionar manualmente</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="search"><input id="busca-correio" placeholder="Buscar por inspetor, endereço, rastreio, CAP ou C.C…" value="${esc(state.buscaCorreio)}"></div>
+          <select id="filtro-correio">
+            <option value="todos" ${state.filtroCorreio === 'todos' ? 'selected' : ''}>Todos os status</option>
+            <option value="pendente" ${state.filtroCorreio === 'pendente' ? 'selected' : ''}>Aguardando envio</option>
+            <option value="concluido" ${state.filtroCorreio === 'concluido' ? 'selected' : ''}>Concluídos</option>
+          </select>
+          <select id="filtro-origem-correio">
+            <option value="todas" ${state.filtroOrigemCorreio === 'todas' ? 'selected' : ''}>Todas as origens</option>
+            <option value="sistema" ${state.filtroOrigemCorreio === 'sistema' ? 'selected' : ''}>Vindos de solicitações</option>
+            <option value="manual" ${state.filtroOrigemCorreio === 'manual' ? 'selected' : ''}>Adicionados manualmente</option>
+            <option value="importado" ${state.filtroOrigemCorreio === 'importado' ? 'selected' : ''}>Importados</option>
+          </select>
+          <span class="toolbar-count" id="correio-count"></span>
+        </div>
+        <div id="correio-table"></div>
+      </div>
+    </div>
+  `);
+  content.appendChild(wrap);
+
+  wrap.querySelector('#correio-export').onclick = exportarCorreios;
+  wrap.querySelector('#correio-import').onclick = () => { state.modal = { type: 'correio-import' }; render(); };
+  wrap.querySelector('#correio-add').onclick = () => { state.modal = { type: 'correio-form' }; render(); };
+  wrap.querySelector('#busca-correio').oninput = e => { state.buscaCorreio = e.target.value; renderTabela(); };
+  wrap.querySelector('#filtro-correio').onchange = e => { state.filtroCorreio = e.target.value; renderTabela(); };
+  wrap.querySelector('#filtro-origem-correio').onchange = e => { state.filtroOrigemCorreio = e.target.value; renderTabela(); };
+
+  function renderTabela(){
+    const box = wrap.querySelector('#correio-table');
+    const q = (state.buscaCorreio || '').toLowerCase();
+    const lista = state.correios.filter(c => {
+      const texto = [c.inspetor, c.endereco, c.rastreio, c.cap, c.centroCusto, c.responsavel].join(' ').toLowerCase();
+      return (!q || texto.includes(q))
+        && (state.filtroCorreio === 'todos' || c.status === state.filtroCorreio)
+        && (state.filtroOrigemCorreio === 'todas' || c.origem === state.filtroOrigemCorreio);
+    });
+    wrap.querySelector('#correio-count').textContent = `${lista.length} de ${state.correios.length}`;
+
+    if(lista.length === 0){
+      box.innerHTML = `<div class="empty-state"><div class="glyph">✉️</div>${state.correios.length ? 'Nenhum envio com esse filtro.' : 'Nenhum envio registrado. Aprove um pedido, adicione manualmente ou importe a planilha.'}</div>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Inspetor</th><th>Endereço</th><th>CAP</th><th>Data</th><th>Nº de rastreio</th><th>Tipo</th><th>Status</th><th>Responsável</th><th>Previsão</th><th>Origem</th><th class="col-actions">Ações</th></tr></thead>
+        <tbody>${lista.map(c => `
+          <tr>
+            <td><div class="cell-main">${esc(c.inspetor)}</div><div class="cell-sub mono">C.C ${esc(c.centroCusto) || '—'}</div></td>
+            <td class="col-end">${esc(c.endereco) || '—'}</td>
+            <td class="mono">${esc(c.cap) || '—'}</td>
+            <td class="mono small nowrap">${fmtDia(c.dataEnvio)}</td>
+            <td class="mono small nowrap">${esc(c.rastreio) || '<span class="dim">aguardando</span>'}</td>
+            <td>${esc(c.tipo) || '—'}</td>
+            <td><span class="badge ${c.status === 'concluido' ? 'st-ok' : 'pendente'}">${c.status === 'concluido' ? 'Concluído' : 'Aguardando envio'}</span></td>
+            <td class="dim">${esc(c.responsavel) || '—'}</td>
+            <td class="dim">${esc(c.previsao) || '—'}</td>
+            <td><span class="chip">${CORREIO_ORIGEM[c.origem] || esc(c.origem)}</span></td>
+            <td class="col-actions">
+              ${c.status === 'pendente' ? `<button class="icon-btn tone-ok" data-act="concluir" data-id="${c.id}">Concluir</button>` : ''}
+              <button class="icon-btn" data-act="editar" data-id="${c.id}">Editar</button>
+              <button class="icon-btn danger" data-act="excluir" data-id="${c.id}">Excluir</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>`;
+    box.querySelectorAll('[data-act]').forEach(btn => {
+      btn.onclick = async () => {
+        const c = state.correios.find(x => x.id === btn.dataset.id);
+        if(!c) return;
+        if(btn.dataset.act === 'editar'){ state.modal = { type: 'correio-form', correio: c }; render(); }
+        else if(btn.dataset.act === 'excluir'){ state.modal = { type: 'correio-excluir', correio: c }; render(); }
+        else {
+          const erro = await updateCorreio(c.id, { ...c, status: 'concluido', previsao: c.previsao || 'entregue' });
+          showToast(erro ? 'Erro ao concluir: ' + erro : `Envio de ${c.inspetor} marcado como concluído.`);
+        }
+      };
+    });
+  }
+  renderTabela();
+}
+
+// ---------- Janelas (modais) ------------------------------------------
+function modalCorreioHtml(m){
+  if(m.type === 'correio-form'){
+    const c = m.correio || {};
+    const novo = !c.id;
+    const hoje = new Date().toISOString().slice(0, 10);
+    return `
+      <h3>${novo ? 'Adicionar envio manualmente' : 'Editar envio'}</h3>
+      <p class="modal-sub">${novo ? 'Use para casos específicos que não passaram por uma solicitação.' : 'As alterações também são enviadas para a planilha.'}</p>
+      <div class="alert-box" id="c-erro" style="display:none"></div>
+
+      <div class="form-section">Destinatário</div>
+      <div class="field-row">
+        <div class="field"><label for="c-inspetor">Inspetor *</label><input id="c-inspetor" value="${esc(c.inspetor)}"></div>
+        <div class="field"><label for="c-cc">C.C</label><input id="c-cc" value="${esc(c.centroCusto)}"></div>
+      </div>
+      <div class="field"><label for="c-end">Endereço</label><textarea id="c-end" rows="2">${esc(c.endereco)}</textarea></div>
+
+      <div class="form-section">Envio</div>
+      <div class="field-row-3">
+        <div class="field"><label for="c-cap">CAP</label><input id="c-cap" value="${esc(c.cap)}"></div>
+        <div class="field"><label for="c-data">Data</label><input id="c-data" type="date" value="${esc(c.dataEnvio || (novo ? hoje : ''))}"></div>
+        <div class="field"><label for="c-tipo">Tipo</label><input id="c-tipo" list="c-tipos" value="${esc(c.tipo === undefined ? 'Caixa' : c.tipo)}"><datalist id="c-tipos"><option value="Caixa"><option value="Envelope"><option value="Documento"></datalist></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="c-rast">Nº de rastreio</label><input id="c-rast" value="${esc(c.rastreio)}" placeholder="AD 000 000 000 BR"></div>
+        <div class="field"><label for="c-status">Status</label>
+          <select id="c-status">
+            <option value="pendente" ${c.status !== 'concluido' ? 'selected' : ''}>Aguardando envio</option>
+            <option value="concluido" ${c.status === 'concluido' ? 'selected' : ''}>Concluído</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="c-resp">Responsável</label><input id="c-resp" value="${esc(c.responsavel !== undefined ? c.responsavel : nomeDoEmail(state.session.user.email))}"></div>
+        <div class="field"><label for="c-prev">Previsão de entrega</label><input id="c-prev" value="${esc(c.previsao)}" placeholder="data ou “entregue”"></div>
+      </div>
+
+      <div class="form-section">Anexos (links ou observações)</div>
+      <div class="field-row">
+        <div class="field"><label for="c-a1">Anexo 1</label><input id="c-a1" value="${esc(c.anexo1)}"></div>
+        <div class="field"><label for="c-a2">Anexo 2</label><input id="c-a2" value="${esc(c.anexo2)}"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="secondary" id="modal-cancel">Cancelar</button>
+        <button class="primary" id="modal-save">${novo ? 'Adicionar envio' : 'Salvar alterações'}</button>
+      </div>`;
+  }
+
+  if(m.type === 'correio-excluir'){
+    const c = m.correio;
+    return `
+      <h3>Excluir envio</h3>
+      <p class="modal-sub">Remover o envio de <strong>${esc(c.inspetor)}</strong>${c.rastreio ? ` (${esc(c.rastreio)})` : ''}? A linha também sai da planilha.</p>
+      <div class="alert-box" id="c-erro" style="display:none"></div>
+      <div class="modal-actions">
+        <button class="secondary" id="modal-cancel">Cancelar</button>
+        <button class="primary btn-danger" id="c-confirm-del">Sim, excluir</button>
+      </div>`;
+  }
+
+  // correio-import
+  if(!m.folhas){
+    return `
+      <h3>Importar planilha</h3>
+      <p class="modal-sub">Escolha o arquivo .xlsx de controle de correio. Todas as abas que tiverem a coluna INSPETOR (por exemplo 2026 e 2025) serão lidas.</p>
+      <div class="alert-box" id="c-erro" style="display:none"></div>
+      <div class="field"><label for="c-file">Arquivo Excel</label><input id="c-file" type="file" accept=".xlsx"></div>
+      <div class="info-box">Colunas reconhecidas: INSPETOR, C.C, ENDEREÇO, CAP, DATA, Nº DE RATREIO, TIPO, STATUS, RESPONSÁVEL, ANEXOS 1, ANEXO 2 e PREVISÃO DE ENTREGA. Linhas já existentes (mesmo nº de rastreio) são ignoradas.</div>
+      <div class="modal-actions"><button class="secondary" id="modal-cancel">Cancelar</button></div>`;
+  }
+  return `
+    <h3>Conferir antes de importar</h3>
+    <p class="modal-sub">Arquivo: <strong>${esc(m.arquivo)}</strong></p>
+    <div class="alert-box" id="c-erro" style="display:none"></div>
+    <dl class="detail-grid">
+      ${m.folhas.map(f => `<dt>Aba ${esc(f.nome)}</dt><dd>${f.linhas.length} linha(s)</dd>`).join('')}
+      <dt>Novas</dt><dd class="t-accent">${m.novas.length}</dd>
+      <dt>Já existentes</dt><dd>${m.duplicadas}</dd>
+    </dl>
+    ${m.novas.length ? `
+      <div class="table-scroll"><table class="table-compact">
+        <thead><tr><th>Inspetor</th><th>Data</th><th>Rastreio</th><th>Status</th></tr></thead>
+        <tbody>${m.novas.slice(0, 5).map(l => `<tr><td>${esc(l.inspetor)}</td><td class="mono">${fmtDia(l.dataEnvio)}</td><td class="mono">${esc(l.rastreio) || '—'}</td><td>${l.status === 'concluido' ? 'Concluído' : 'Aguardando envio'}</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${m.novas.length > 5 ? `<p class="dim small">Mostrando 5 de ${m.novas.length}.</p>` : ''}` : `<div class="info-box">Nada novo para importar.</div>`}
+    <div class="modal-actions">
+      <button class="secondary" id="modal-cancel">Cancelar</button>
+      ${m.novas.length ? `<button class="primary" id="c-confirmar-import">Importar ${m.novas.length} linha(s)</button>` : ''}
+    </div>`;
+}
+
+function bindModalCorreio(overlay, m){
+  const erro = msg => { const b = overlay.querySelector('#c-erro'); if(b){ b.textContent = msg; b.style.display = 'block'; } };
+
+  if(m.type === 'correio-form'){
+    overlay.querySelector('#modal-save').onclick = async () => {
+      const v = id => overlay.querySelector('#' + id).value.trim();
+      const dados = {
+        inspetor: v('c-inspetor'), centroCusto: v('c-cc'), endereco: v('c-end'), cap: v('c-cap'),
+        dataEnvio: v('c-data'), rastreio: v('c-rast'), tipo: v('c-tipo'), status: v('c-status'),
+        responsavel: v('c-resp'), previsao: v('c-prev'), anexo1: v('c-a1'), anexo2: v('c-a2')
+      };
+      if(!dados.inspetor){ erro('Informe o nome do inspetor.'); return; }   // sem render(): o formulário não é apagado
+      const editando = m.correio && m.correio.id;
+      const msg = editando ? await updateCorreio(m.correio.id, dados) : await addCorreio(dados, 'manual');
+      if(msg){ erro('Não foi possível salvar: ' + msg); return; }
+      state.modal = null;
+      showToast(editando ? 'Envio atualizado e enviado para a planilha.' : 'Envio adicionado e enviado para a planilha.');
+    };
+  }
+
+  if(m.type === 'correio-excluir'){
+    overlay.querySelector('#c-confirm-del').onclick = async () => {
+      const msg = await deleteCorreio(m.correio);
+      if(msg){ erro('Não foi possível excluir: ' + msg); return; }
+      state.modal = null;
+      showToast('Envio removido.');
+    };
+  }
+
+  if(m.type === 'correio-import'){
+    const input = overlay.querySelector('#c-file');
+    if(input) input.onchange = async () => {
+      const arquivo = input.files[0];
+      if(!arquivo) return;
+      try {
+        const folhas = await lerPlanilhaCorreios(arquivo);
+        if(!folhas.length){ erro('Nenhuma aba com a coluna INSPETOR foi encontrada nesse arquivo.'); return; }
+        const existentes = new Set(state.correios.map(chaveCorreio));
+        const novas = []; let duplicadas = 0;
+        folhas.forEach(f => f.linhas.forEach(l => {
+          const k = chaveCorreio(l);
+          if(existentes.has(k)){ duplicadas++; return; }
+          existentes.add(k); novas.push(l);
+        }));
+        state.modal = { type: 'correio-import', arquivo: arquivo.name, folhas, novas, duplicadas };
+        render();
+      } catch(e){ erro('Não foi possível ler a planilha: ' + e.message); }
+    };
+    const confirmar = overlay.querySelector('#c-confirmar-import');
+    if(confirmar) confirmar.onclick = async () => {
+      confirmar.disabled = true; confirmar.textContent = 'Importando…';
+      const msg = await importarCorreios(m.novas);
+      if(msg){ erro(msg); confirmar.disabled = false; confirmar.textContent = `Importar ${m.novas.length} linha(s)`; return; }
+      state.modal = null;
+      showToast(`${m.novas.length} envio(s) importado(s).`);
+    };
+  }
+}
+
   function fmtDate(iso){ const d=new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
   function fmtMoney(v){ return (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 
