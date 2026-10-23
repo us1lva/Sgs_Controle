@@ -63,23 +63,22 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     produtos: [], solicitacoes: [], logs: [], emailControle: '',
     buscaProduto: '', filtroCategoria: 'todas', buscaSolicitacao: '', filtroStatus: 'todos', ordenacao: 'recentes',
     modal: null, toast: null, sidebarAberta: false,
+    limiteSolicitacoes: 1000,
   };
 
   document.documentElement.setAttribute('data-theme', state.theme);
 
-  // =====================================================================
-// ABA "CORREIOS" — cole este bloco INTEIRO dentro do app.js, logo depois
-// da linha:  document.documentElement.setAttribute('data-theme', state.theme);
-// (ainda dentro do  (function(){ ... })();  principal).
-// As 5 pequenas edições no restante do arquivo estão no PASSO-A-PASSO.md.
-// =====================================================================
+  // ---------- Aba CORREIOS ------------------------------------------------
 
 Object.assign(state, {
   correios: [],
+  orcamentos: {}, consumoCC: [], orcamentoOk: true,   // orçamento por centro de custo
   buscaCorreio: '',
   filtroCorreio: 'todos',        // todos | pendente | concluido
   filtroOrigemCorreio: 'todas',  // todas | sistema | manual | importado
 });
+
+const { valorPedido, statusOrcamento, consumoDoMes, estouraOrcamento, esc, hojeISO, fmtDia, nomeDoEmail, estoqueMinimo, statusEstoque, precisaRepor, gerarCSV, emBlocos, itemAindaUrgente } = window.SgsUtils;
 
 const CORREIO_ORIGEM = { sistema: 'Sistema', manual: 'Manual', importado: 'Importado' };
 
@@ -104,16 +103,6 @@ function correioParaBanco(c){
     responsavel: vazio(c.responsavel), anexo1: vazio(c.anexo1), anexo2: vazio(c.anexo2),
     previsao_entrega: vazio(c.previsao)
   };
-}
-// "2026-07-14" -> "14/07/2026" (sem passar por Date, para não mudar o dia por fuso)
-function fmtDia(iso){
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || '—');
-}
-// "yuri.silva1@sgs.com" -> "Yuri Silva"
-function nomeDoEmail(email){
-  const local = String(email || '').split('@')[0].replace(/[0-9]+/g, '');
-  return local.split(/[._-]+/).filter(Boolean).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
 // ---------- Banco de dados --------------------------------------------
@@ -172,6 +161,33 @@ function garantirRealtimeCorreios(){
       if(!state.modal) render();                       // não apaga um formulário aberto
     }, 400);
   }).subscribe();
+}
+
+// ---------- Orçamento por centro de custo (tabela orcamento_cc + view consumo_mensal_cc_valor) ----------
+async function carregarOrcamento(){
+  const [o, c] = await Promise.all([
+    supabaseClient.from('orcamento_cc').select('centro_custo, teto_mensal'),
+    supabaseClient.from('consumo_mensal_cc_valor').select('*').gte('mes', hojeISO().slice(0, 7) + '-01')
+  ]);
+  // Se a migração 002 ainda não foi aplicada, a aba avisa em vez de quebrar o painel.
+  state.orcamentoOk = !o.error && !c.error;
+  if(!state.orcamentoOk){ console.warn('Orçamento indisponível:', (o.error || c.error).message); state.orcamentos = {}; state.consumoCC = []; return; }
+  state.orcamentos = Object.fromEntries((o.data || []).map(r => [r.centro_custo, Number(r.teto_mensal)]));
+  state.consumoCC = c.data || [];
+}
+async function salvarTeto(cc, teto){
+  const { error } = await supabaseClient.from('orcamento_cc').upsert({ centro_custo: cc, teto_mensal: teto, atualizado_em: new Date().toISOString() });
+  if(error) return error.message;
+  await carregarOrcamento();
+  await addLog('ORCAMENTO_CC', `Teto mensal do C.C. "${cc}" definido em ${fmtMoney(teto)}.`);
+  return null;
+}
+async function removerTeto(cc){
+  const { error } = await supabaseClient.from('orcamento_cc').delete().eq('centro_custo', cc);
+  if(error) return error.message;
+  await carregarOrcamento();
+  await addLog('ORCAMENTO_CC', `Teto mensal do C.C. "${cc}" removido.`);
+  return null;
 }
 
 // ---------- Leitura da planilha .xlsx ---------------------------------
@@ -250,7 +266,7 @@ async function exportarCorreios(){
   const colunas = [
     { header: 'INSPETOR', key: 'inspetor', width: 28 }, { header: 'C.C', key: 'cc', width: 10 },
     { header: 'ENDEREÇO', key: 'endereco', width: 52 }, { header: 'CAP', key: 'cap', width: 12 },
-    { header: 'DATA', key: 'data', width: 13 }, { header: 'Nº DE RATREIO', key: 'rastreio', width: 22 },
+    { header: 'DATA', key: 'data', width: 13 }, { header: 'Nº DE RASTREIO', key: 'rastreio', width: 22 },
     { header: 'TIPO', key: 'tipo', width: 12 }, { header: 'STATUS', key: 'status', width: 14 },
     { header: 'RESPONSÁVEL', key: 'responsavel', width: 18 }, { header: 'ANEXOS 1', key: 'anexo1', width: 22 },
     { header: 'ANEXO 2', key: 'anexo2', width: 22 }, { header: 'PREVISÃO DE ENTREGA', key: 'previsao', width: 22 },
@@ -380,7 +396,7 @@ function modalCorreioHtml(m){
   if(m.type === 'correio-form'){
     const c = m.correio || {};
     const novo = !c.id;
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = hojeISO();
     return `
       <h3>${novo ? 'Adicionar envio manualmente' : 'Editar envio'}</h3>
       <p class="modal-sub">${novo ? 'Use para casos específicos que não passaram por uma solicitação.' : 'As alterações também são enviadas para a planilha.'}</p>
@@ -549,14 +565,6 @@ function bindModalCorreio(overlay, m){
   }
   function elFrag(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
 
-  // Escapa texto antes de inserir no HTML. Este painel exibe dados enviados por
-  // COLABORADORES (não confiáveis) na tela do ADMIN — todo campo de texto livre
-  // (nome, motivo, endereço, item, fornecedor...) precisa passar por aqui antes
-  // de entrar em um template de innerHTML, ou vira um vetor de XSS armazenado.
-  function esc(v){
-    if(v === null || v === undefined) return '';
-    return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
   function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
   function buildMailto(email, subject, body){
@@ -567,16 +575,15 @@ function bindModalCorreio(overlay, m){
 
   function exportarCSV(dados, nomeArquivo){
     if(!dados || !dados.length){ showToast('Nenhum dado para exportar.'); return; }
-    const headers = Object.keys(dados[0]).join(',');
-    const rows = dados.map(obj => Object.values(obj).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers, ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    // Blob (e não data-URI): data-URI corta o arquivo no primeiro "#" e estoura em arquivos grandes.
+    const blob = new Blob([gerarCSV(dados)], { type: 'text/csv;charset=utf-8' });
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.csv`);
+    link.href = URL.createObjectURL(blob);
+    link.download = `${nomeArquivo}_${hojeISO()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     showToast(`Relatório ${nomeArquivo}.csv baixado com sucesso!`);
   }
 
@@ -635,7 +642,7 @@ function bindModalCorreio(overlay, m){
     const blob = new Blob([buffer], { type: 'application/octet-stream' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.xlsx`;
+    link.download = `${nomeArquivo}_${hojeISO()}.xlsx`;
     link.click();
     URL.revokeObjectURL(link.href);
     showToast(`Planilha ${nomeArquivo}.xlsx exportada com sucesso!`);
@@ -645,7 +652,7 @@ function bindModalCorreio(overlay, m){
   // abaixo do estoque mínimo), já sugerindo quanto comprar de cada um e o
   // custo estimado da reposição — pronta para mandar pro fornecedor/compras.
   async function exportarListaCompras(){
-    const emRuptura = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5));
+    const emRuptura = state.produtos.filter(precisaRepor);
 
     if(emRuptura.length === 0){ showToast('Nenhum item em ruptura no momento — nada para exportar.'); return; }
 
@@ -668,7 +675,7 @@ function bindModalCorreio(overlay, m){
       .sort((a,b) => a.estoque - b.estoque) // mais crítico (mais perto/abaixo de zero) primeiro
       .map(p => {
         // Sugere repor até o dobro do mínimo, garantindo uma folga além de só "zerar a ruptura".
-        const qtdSugerida = Math.max((Number(p.quantidadeMinima||5) * 2) - Number(p.estoque||0), 1);
+        const qtdSugerida = Math.max((estoqueMinimo(p) * 2) - Number(p.estoque||0), 1);
         const custoEstimado = qtdSugerida * Number(p.preco||0);
         custoTotalGeral += custoEstimado;
         const zerado = p.estoque <= 0;
@@ -734,6 +741,7 @@ function bindModalCorreio(overlay, m){
       categoria: row.categoria || 'Geral',
       estoque: Number(row.estoque || 0),
       quantidadeMinima: Number(row.quantidade_minima ?? 5),
+      atualizadoEm: row.atualizado_em || null,
       preco: Number(row.preco || 0),
       fornecedor: row.fornecedor || '',
       unidade: row.unidade || 'un'
@@ -770,20 +778,22 @@ function bindModalCorreio(overlay, m){
   }
 
   async function carregarSolicitacoes(){
-    const { data, error } = await supabaseClient.from('solicitacoes').select('*').order('data_criacao', { ascending: false });
+    const { data, error } = await supabaseClient.from('solicitacoes').select('*')
+      .order('data_criacao', { ascending: false }).range(0, state.limiteSolicitacoes - 1);
     if(error){ console.error(error); return []; }
     const solicitacoes = (data || []).map(mapSolicitacao);
 
     const ids = solicitacoes.map(s => s.id);
     if(ids.length > 0){
-      const { data: itensData, error: itensError } = await supabaseClient
+      // Em blocos de 100: um .in() com milhares de ids estoura o tamanho da URL.
+      const resultados = await Promise.all(emBlocos(ids, 100).map(bloco => supabaseClient
         .from('solicitacao_itens')
         .select('solicitacao_id, produto_id, quantidade, disponivel, produtos ( nome, sku, categoria )')
-        .in('solicitacao_id', ids);
-
-      if(!itensError && itensData){
-        const porSolicitacao = {};
-        itensData.forEach(row => {
+        .in('solicitacao_id', bloco)));
+      const porSolicitacao = {};
+      resultados.forEach(({ data: itensData, error: itensError }) => {
+        if(itensError){ console.error(itensError); return; }
+        (itensData || []).forEach(row => {
           if(!porSolicitacao[row.solicitacao_id]) porSolicitacao[row.solicitacao_id] = [];
           porSolicitacao[row.solicitacao_id].push({
             produtoId: row.produto_id,
@@ -794,8 +804,8 @@ function bindModalCorreio(overlay, m){
             disponivel: row.disponivel
           });
         });
-        solicitacoes.forEach(s => { s.itens = porSolicitacao[s.id] || []; });
-      }
+      });
+      solicitacoes.forEach(s => { s.itens = porSolicitacao[s.id] || []; });
     }
 
     return solicitacoes;
@@ -839,8 +849,8 @@ function bindModalCorreio(overlay, m){
     showToast('Produto cadastrado e sincronizado com o banco.');
   }
 
-  async function updateProduto(id, payload){
-    const { error } = await supabaseClient.from('produtos').update({
+  async function updateProduto(id, payload, versaoLida){
+    let q = supabaseClient.from('produtos').update({
       nome: payload.nome,
       codigo: payload.sku,
       sku: payload.sku,
@@ -851,10 +861,19 @@ function bindModalCorreio(overlay, m){
       fornecedor: payload.fornecedor,
       atualizado_em: new Date().toISOString()
     }).eq('id', id);
-    if(error){ showToast('Erro ao atualizar: ' + error.message); return; }
+    // Controle otimista: só grava se ninguém alterou o produto desde que o formulário abriu.
+    if(versaoLida) q = q.eq('atualizado_em', versaoLida);
+    const { data, error } = await q.select('id');
+    if(error){ showToast('Erro ao atualizar: ' + error.message); return false; }
+    if(versaoLida && (!data || data.length === 0)){
+      state.produtos = await carregarProdutos();
+      showToast('Este produto foi alterado por outra pessoa enquanto você editava. Reabra e confira antes de salvar.');
+      return false;
+    }
     state.produtos = await carregarProdutos();
     await addLog('ATUALIZAR_PRODUTO', `Produto "${payload.nome}" atualizado.`);
     showToast('Produto atualizado e sincronizado com o banco.');
+    return true;
   }
 
   async function deleteProduto(id){
@@ -912,6 +931,11 @@ function bindModalCorreio(overlay, m){
 
   async function atualizarStatus(id, status){
     const sol = state.solicitacoes.find(s=>s.id===id);
+    if(status === 'aprovado' && sol){
+      const cc = sol.centroCusto || '(sem C.C)';
+      const est = estouraOrcamento(cc, valorPedido(sol, state.produtos), consumoDoMes(state.consumoCC, hojeISO().slice(0, 7)), state.orcamentos);
+      if(est && !window.confirm(`Este pedido leva o C.C. "${cc}" a ${fmtMoney(est.depois)}, acima do teto mensal de ${fmtMoney(est.teto)}.\n\nAprovar mesmo assim?`)) return;
+    }
     const { error } = await supabaseClient.rpc('admin_atualizar_status_solicitacao', {
       p_solicitacao_id: id,
       p_novo_status: status
@@ -919,6 +943,7 @@ function bindModalCorreio(overlay, m){
     if(error){ showToast('Erro ao atualizar status: ' + error.message); return; }
     state.produtos = await carregarProdutos();
     state.solicitacoes = await carregarSolicitacoes();
+    await carregarOrcamento();
     await addLog('STATUS_SOLICITACAO', `Pedido de ${sol ? sol.nome : id} alterado para ${status.toUpperCase()}.`);
     showToast(`Solicitação${sol ? ' de ' + sol.nome : ''} marcada como ${status.toUpperCase()}. Notificando por e-mail...`);
     const { error: erroEmail } = await notificarColaborador(sol, status) || {};
@@ -931,11 +956,11 @@ function bindModalCorreio(overlay, m){
     realtimeSubscribed = true;
     supabaseClient.channel('admin-produtos').on('postgres_changes', { event: '*', schema: 'public', table: 'produtos' }, async () => {
       state.produtos = await carregarProdutos();
-      render();
+      if(!state.modal) render();      // não apaga um formulário aberto
     }).subscribe();
     supabaseClient.channel('admin-solicitacoes').on('postgres_changes', { event: '*', schema: 'public', table: 'solicitacoes' }, async () => {
       state.solicitacoes = await carregarSolicitacoes();
-      render();
+      if(!state.modal) render();
     }).subscribe();
   }
 
@@ -983,6 +1008,7 @@ function bindModalCorreio(overlay, m){
     state.logs = logs;
     state.emailControle = emailControle;
     state.correios = await carregarCorreios();
+    await carregarOrcamento();
     garantirRealtimeCorreios();
     garantirRealtime();
   }
@@ -1190,7 +1216,7 @@ function bindModalCorreio(overlay, m){
 
     if(!state.isAdmin){ renderAcessoNegado(); return; }
 
-    if(state.toast) app.appendChild(elFrag(`<div class="toast"><span class="toast-ok">✓</span> ${state.toast}</div>`));
+    if(state.toast) app.appendChild(elFrag(`<div class="toast"><span class="toast-ok">✓</span> ${esc(state.toast)}</div>`));
 
     const pendentes = state.solicitacoes.filter(s=>s.status==='pendente').length;
 
@@ -1198,7 +1224,9 @@ function bindModalCorreio(overlay, m){
     backdrop.onclick = () => { state.sidebarAberta = false; render(); };
     app.appendChild(backdrop);
 
-    const qtdRepor = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5)).length;
+    const qtdRepor = state.produtos.filter(precisaRepor).length;
+    const consumoAtual = consumoDoMes(state.consumoCC, hojeISO().slice(0, 7));
+    const ccEstourados = Object.keys(state.orcamentos).filter(cc => statusOrcamento(consumoAtual[cc], state.orcamentos[cc]).k === 'estourado').length;
     const navItem = (tab, ico, label, count, tone) => `
       <div class="nav-item ${state.tab===tab?'active':''}" data-tab="${tab}" role="button" tabindex="0">
         <span class="nav-ico">${ico}</span><span class="nav-label">${label}</span>
@@ -1222,6 +1250,7 @@ function bindModalCorreio(overlay, m){
           ${navItem('solicitacoes', '📝', 'Solicitações', pendentes, 'warn')}
           ${navItem('produtos', '📦', 'Produtos', qtdRepor, 'danger')}
           ${navItem('correios', '✉️', 'Correios', state.correios.filter(c => c.status === 'pendente').length, 'warn')}
+          ${navItem('orcamento', '💰', 'Orçamento C.C.', ccEstourados, 'danger')}
         </nav>
 
         <nav class="nav-group">
@@ -1255,6 +1284,7 @@ function bindModalCorreio(overlay, m){
       dashboard:['Visão Geral','Panorama do estoque e métricas operacionais'],
       produtos:['Inventário','Gerencie o catálogo de produtos do banco de dados'],
       correios:['Controle de Correio','Envios aprovados e entregues, em sincronia com a planilha'],
+      orcamento:['Orçamento por Centro de Custo','Consumo do mês contra o teto de cada C.C.'],
       solicitacoes:['Fila de Pedidos','Analise, aprova e acompanhe as requisições'],
       logs:['Auditoria e Histórico','Registro das últimas ações realizadas neste painel'],
       config:['Configurações do Sistema','Preferências globais de e-mail e parâmetros'],
@@ -1312,6 +1342,7 @@ function bindModalCorreio(overlay, m){
     if(state.tab==='dashboard') renderDashboard(content);
     else if(state.tab==='produtos') renderProdutos(content);
     else if(state.tab==='correios') renderCorreios(content);
+    else if(state.tab==='orcamento') renderOrcamento(content);
     else if(state.tab==='solicitacoes') renderSolicitacoes(content);
     else if(state.tab==='logs') renderLogs(content);
     else if(state.tab==='config') renderConfig(content);
@@ -1332,8 +1363,8 @@ function bindModalCorreio(overlay, m){
           <div class="field"><label>E-mail</label><input id="login-email" type="email" placeholder="nome@empresa.com" autofocus></div>
           <div class="field"><label>Senha</label><input id="login-senha" type="password" placeholder="${isSignup ? 'Mínimo 6 caracteres' : 'Sua senha'}"></div>
           ${!isSignup ? `<div class="auth-forgot"><button type="button" class="auth-link" id="link-esqueci-senha">Esqueci minha senha</button></div>` : ''}
-          ${state.authConfirmMsg ? `<div class="auth-msg ok" role="status">${state.authConfirmMsg}</div>` : ''}
-          ${state.authError ? `<div class="auth-msg err" role="alert">${state.authError}</div>` : ''}
+          ${state.authConfirmMsg ? `<div class="auth-msg ok" role="status">${esc(state.authConfirmMsg)}</div>` : ''}
+          ${state.authError ? `<div class="auth-msg err" role="alert">${esc(state.authError)}</div>` : ''}
           <button class="primary btn-block" id="login-btn" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Aguarde...' : (isSignup ? 'Criar conta' : 'Entrar')}</button>
           <div class="auth-foot">
             <span class="dim">${isSignup ? 'Já tem conta?' : 'Precisa criar a conta de admin?'}</span>
@@ -1371,7 +1402,7 @@ function bindModalCorreio(overlay, m){
           <h3>Recuperar Senha</h3>
           <p class="modal-sub">Informe o e-mail da conta de administrador. Vamos enviar um link para redefinir a senha.</p>
           <div class="field"><label>E-mail</label><input id="recuperar-email" type="email" placeholder="nome@empresa.com" autofocus></div>
-          ${state.authError ? `<div class="auth-msg err" role="alert">${state.authError}</div>` : ''}
+          ${state.authError ? `<div class="auth-msg err" role="alert">${esc(state.authError)}</div>` : ''}
           <button class="primary btn-block" id="recuperar-btn" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Enviando...' : 'Enviar link de recuperação'}</button>
           <div class="auth-foot">
             <button type="button" class="auth-link" id="voltar-login">← Voltar para o login</button>
@@ -1401,7 +1432,7 @@ function bindModalCorreio(overlay, m){
           <p class="modal-sub">Escolha uma nova senha para sua conta de administrador.</p>
           <div class="field"><label>Nova Senha</label><input id="nova-senha" type="password" placeholder="Mínimo 6 caracteres" autofocus></div>
           <div class="field"><label>Confirmar Nova Senha</label><input id="confirmar-senha" type="password" placeholder="Repita a nova senha"></div>
-          ${state.novaSenhaError ? `<div class="auth-msg err" role="alert">${state.novaSenhaError}</div>` : ''}
+          ${state.novaSenhaError ? `<div class="auth-msg err" role="alert">${esc(state.novaSenhaError)}</div>` : ''}
           <button class="primary btn-block" id="definir-senha-btn" ${state.authSending ? 'disabled' : ''}>${state.authSending ? 'Salvando...' : 'Salvar Nova Senha'}</button>
         </div>
       </div>
@@ -1423,7 +1454,7 @@ function bindModalCorreio(overlay, m){
       <div class="overlay">
         <div class="modal modal-narrow">
           <h3>Acesso Negado</h3>
-          <p class="modal-sub">A conta <strong>${state.session.user.email}</strong> não tem permissão de administrador para este painel.</p>
+          <p class="modal-sub">A conta <strong>${esc(state.session.user.email)}</strong> não tem permissão de administrador para este painel.</p>
           <button class="secondary btn-block" id="btn-sair">Sair</button>
         </div>
       </div>
@@ -1433,19 +1464,13 @@ function bindModalCorreio(overlay, m){
   }
 
   // ---------- Helpers de organização visual ----------
-  function statusEstoque(p){
-    const e = Number(p.estoque||0), mn = Number(p.quantidadeMinima||5);
-    if(e <= 0) return { k:'zero', label:'Sem estoque' };
-    if(e <= mn) return { k:'baixo', label:'Repor' };
-    return { k:'ok', label:'Normal' };
-  }
   function medidorEstoque(p){
-    const e = Number(p.estoque||0), mn = Math.max(Number(p.quantidadeMinima||5), 1);
+    const e = Number(p.estoque||0), mn = Math.max(estoqueMinimo(p), 1);
     const pct = Math.max(0, Math.min(100, Math.round(e / (mn * 2) * 100)));
     return `<div class="meter ${statusEstoque(p).k}" title="${e} em estoque · mínimo ${mn}"><span style="width:${pct}%"></span></div>`;
   }
   function renderDashboard(content){
-    const abaixoMinimo = state.produtos.filter(p => Number(p.estoque||0) <= Number(p.quantidadeMinima||5));
+    const abaixoMinimo = state.produtos.filter(precisaRepor);
     const pendentes = state.solicitacoes.filter(s=>s.status==='pendente');
     const valorTotal = state.produtos.reduce((a,p)=>a + Number(p.estoque||0) * Number(p.preco||0),0);
 
@@ -1455,7 +1480,7 @@ function bindModalCorreio(overlay, m){
     state.solicitacoes
       .filter(s => s.status === 'pendente' || s.status === 'aprovado')
       .forEach(s => {
-        (s.itens || []).filter(it => it.disponivel === false).forEach(it => {
+        (s.itens || []).filter(it => itemAindaUrgente(it, state.produtos.find(p => p.id === it.produtoId))).forEach(it => {
           const key = it.produtoId || it.nome;
           if(!itensUrgentesMap[key]) itensUrgentesMap[key] = { produtoId: it.produtoId, nome: it.nome, sku: it.sku, quantidade: 0, pedidos: 0 };
           itensUrgentesMap[key].quantidade += it.quantidade;
@@ -1776,9 +1801,17 @@ function bindModalCorreio(overlay, m){
           <span class="toolbar-count" id="sol-count"></span>
         </div>
         <div id="sol-table"></div>
+        ${state.solicitacoes.length >= state.limiteSolicitacoes ? `<div class="form-actions"><button class="secondary" id="sol-mais">Carregar mais pedidos antigos</button></div>` : ''}
       </div>
     `);
     content.appendChild(panel);
+    const btnMais = panel.querySelector('#sol-mais');
+    if(btnMais) btnMais.onclick = async () => {
+      btnMais.disabled = true; btnMais.textContent = 'Carregando…';
+      state.limiteSolicitacoes += 1000;
+      state.solicitacoes = await carregarSolicitacoes();
+      render();
+    };
 
     panel.querySelector('#export-solicitacoes').onclick = () => {
       exportarCSV(state.solicitacoes.map(s => ({ Solicitante: s.nome, Email: s.email, Setor: s.setor, Material: s.item, Quantidade: s.quantidade, Endereco: s.endereco, Urgencia: s.urgencia, Status: s.status, Data: s.dataCriacao })), 'Relatorio_Solicitacoes');
@@ -1847,6 +1880,66 @@ function bindModalCorreio(overlay, m){
       });
     }
     renderTable();
+  }
+
+  function renderOrcamento(content){
+    const mes = hojeISO().slice(0, 7);
+    const consumo = consumoDoMes(state.consumoCC, mes);
+    const pedidosCC = {};
+    state.consumoCC.filter(l => String(l.mes).slice(0, 7) === mes).forEach(l => { pedidosCC[l.centro_custo] = (pedidosCC[l.centro_custo] || 0) + Number(l.pedidos || 0); });
+    const ccs = [...new Set([...Object.keys(consumo), ...Object.keys(state.orcamentos)])].sort();
+    const linhas = ccs.map(cc => ({ cc, valor: consumo[cc] || 0, teto: state.orcamentos[cc], pedidos: pedidosCC[cc] || 0, st: statusOrcamento(consumo[cc], state.orcamentos[cc]) }));
+    linhas.sort((a, b) => b.st.pct - a.st.pct || b.valor - a.valor);
+    const total = linhas.reduce((t, l) => t + l.valor, 0);
+    const semTeto = linhas.filter(l => l.st.k === 'sem').length;
+    const estourados = linhas.filter(l => l.st.k === 'estourado').length;
+    const tom = { ok: 'st-ok', alerta: 'st-baixo', estourado: 'st-zero', sem: '' };
+    const rot = { ok: 'Dentro do teto', alerta: 'Perto do teto', estourado: 'Estourado', sem: 'Sem teto' };
+    const medidor = { ok: 'ok', alerta: 'baixo', estourado: 'zero', sem: 'ok' };
+
+    const wrap = elFrag(`
+      <div class="page">
+        <div class="summary-strip">
+          <div class="summary-item"><span>Consumo do mês</span><strong>${fmtMoney(total)}</strong></div>
+          <div class="summary-item"><span>Centros de custo</span><strong>${linhas.length}</strong></div>
+          <div class="summary-item ${estourados ? 'is-danger' : ''}"><span>Acima do teto</span><strong>${estourados}</strong></div>
+          <div class="summary-item ${semTeto ? 'is-warn' : ''}"><span>Sem teto definido</span><strong>${semTeto}</strong></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Teto mensal por centro de custo</h3>
+              <p class="panel-sub">Considera pedidos aprovados e entregues no mês, pelo preço atual do catálogo. Ao aprovar um pedido que estoura o teto, o painel pede confirmação.</p>
+            </div>
+            <button class="primary" id="orc-novo">+ Definir teto</button>
+          </div>
+          ${state.orcamentoOk ? '' : '<div class="alert-box">Orçamento indisponível: aplique a migração <code>supabase/002_orcamento_cc.sql</code> no banco.</div>'}
+          ${linhas.length === 0 ? '<div class="empty-state"><div class="glyph">💰</div>Nenhum consumo neste mês e nenhum teto definido.</div>' : `
+          <div class="table-scroll"><table>
+            <thead><tr><th>Centro de custo</th><th class="num">Pedidos</th><th class="num">Consumo</th><th class="num">Teto</th><th class="col-meter">Uso</th><th>Situação</th><th class="col-actions">Ações</th></tr></thead>
+            <tbody>${linhas.map(l => `
+              <tr>
+                <td><div class="cell-main">${esc(l.cc)}</div></td>
+                <td class="mono num dim">${l.pedidos}</td>
+                <td class="mono num ${l.st.k === 'estourado' ? 't-danger strong' : ''}">${fmtMoney(l.valor)}</td>
+                <td class="mono num dim">${l.teto ? fmtMoney(l.teto) : '—'}</td>
+                <td class="col-meter"><div class="meter ${medidor[l.st.k]}" title="${l.st.pct}% do teto"><span style="width:${Math.min(l.st.pct, 100)}%"></span></div></td>
+                <td><span class="badge ${tom[l.st.k]}">${rot[l.st.k]}${l.st.k !== 'sem' ? ' · ' + l.st.pct + '%' : ''}</span></td>
+                <td class="col-actions">
+                  <button class="icon-btn" data-act="definir" data-cc="${esc(l.cc)}">${l.teto ? 'Alterar teto' : 'Definir teto'}</button>
+                  ${l.teto ? `<button class="icon-btn danger" data-act="remover" data-cc="${esc(l.cc)}">Remover</button>` : ''}
+                </td>
+              </tr>`).join('')}
+            </tbody></table></div>`}
+        </div>
+      </div>`);
+    wrap.querySelector('#orc-novo').onclick = () => { state.modal = { type: 'orcamento-form' }; render(); };
+    wrap.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      const cc = b.dataset.cc;
+      if(b.dataset.act === 'definir'){ state.modal = { type: 'orcamento-form', cc, teto: state.orcamentos[cc] }; render(); }
+      else { const msg = await removerTeto(cc); showToast(msg ? 'Erro ao remover: ' + msg : `Teto de ${cc} removido.`); }
+    });
+    content.appendChild(wrap);
   }
 
   function renderLogs(content){
@@ -1968,7 +2061,7 @@ function bindModalCorreio(overlay, m){
         <div class="form-section">Níveis de estoque</div>
         <div class="field-row">
           <div class="field"><label>Estoque atual *</label><input id="m-qtd" type="number" min="0" value="${p.estoque !== undefined ? p.estoque : 25}"></div>
-          <div class="field"><label>Estoque mínimo (alerta) *</label><input id="m-min" type="number" min="0" value="${p.quantidadeMinima || 5}"></div>
+          <div class="field"><label>Estoque mínimo (alerta) *</label><input id="m-min" type="number" min="0" value="${estoqueMinimo(p)}"></div>
         </div>
 
         <div class="form-section">Custo e fornecedor</div>
@@ -1993,7 +2086,7 @@ function bindModalCorreio(overlay, m){
         </div>
       `;
     } else if(m.type==='alerta-reposicao'){
-      const abaixo = state.produtos.filter(p => p.estoque <= p.quantidadeMinima);
+      const abaixo = state.produtos.filter(precisaRepor);
       inner = `
         <h3>Itens com Necessidade de Reposição</h3>
         <p class="modal-sub">Relação de SKUs com estoque igual ou inferior ao mínimo configurado.</p>
@@ -2095,6 +2188,20 @@ function bindModalCorreio(overlay, m){
         </div>
       `;
     }
+      else if(m.type === 'orcamento-form'){
+      inner = `
+        <h3>${m.cc ? 'Alterar teto mensal' : 'Definir teto mensal'}</h3>
+        <p class="modal-sub">Limite em reais de consumo por mês para o centro de custo.</p>
+        <div class="alert-box" id="o-erro" style="display:none"></div>
+        <div class="field-row">
+          <div class="field"><label for="o-cc">Centro de custo *</label><input id="o-cc" value="${esc(m.cc || '')}" ${m.cc ? 'readonly' : ''} placeholder="ex.: 12345"></div>
+          <div class="field"><label for="o-teto">Teto mensal (R$) *</label><input id="o-teto" type="number" min="0" step="0.01" value="${m.teto || ''}"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="modal-cancel">Cancelar</button>
+          <button class="primary" id="orc-save">Salvar teto</button>
+        </div>`;
+    }
       else if(m.type.startsWith('correio')){ inner = modalCorreioHtml(m); }
 
     const overlay = elFrag(`<div class="overlay"><div class="modal">${inner}</div></div>`);
@@ -2110,7 +2217,8 @@ function bindModalCorreio(overlay, m){
         const sku = overlay.querySelector('#m-sku').value.trim();
         const categoria = overlay.querySelector('#m-cat').value.trim();
         const qtd = parseInt(overlay.querySelector('#m-qtd').value)||0;
-        const min = parseInt(overlay.querySelector('#m-min').value)||5;
+        const minRaw = parseInt(overlay.querySelector('#m-min').value);
+        const min = Number.isNaN(minRaw) ? 5 : Math.max(minRaw, 0);
         const preco = parseFloat(overlay.querySelector('#m-preco').value)||0;
         const fornecedor = overlay.querySelector('#m-forn').value.trim();
 
@@ -2118,7 +2226,8 @@ function bindModalCorreio(overlay, m){
 
         const payload = { nome, sku, categoria, quantidade: qtd, quantidadeMinima: min, preco, fornecedor };
         if(m.produto && m.produto.id){
-          await updateProduto(m.produto.id, payload);
+          const ok = await updateProduto(m.produto.id, payload, m.produto.atualizadoEm);
+          if(!ok){ state.modal = null; render(); return; }
         } else {
           await addProduto(payload);
         }
@@ -2139,6 +2248,19 @@ function bindModalCorreio(overlay, m){
     const exportarComprasBtn = overlay.querySelector('#modal-exportar-compras');
     if(exportarComprasBtn) exportarComprasBtn.onclick = exportarListaCompras;
     if(m.type.startsWith('correio')) bindModalCorreio(overlay, m);
+    if(m.type === 'orcamento-form'){
+      overlay.querySelector('#orc-save').onclick = async () => {
+        const erro = msg => { const b = overlay.querySelector('#o-erro'); b.textContent = msg; b.style.display = 'block'; };
+        const cc = overlay.querySelector('#o-cc').value.trim();
+        const teto = parseFloat(overlay.querySelector('#o-teto').value);
+        if(!cc){ erro('Informe o centro de custo.'); return; }
+        if(!(teto > 0)){ erro('Informe um teto maior que zero.'); return; }
+        const msg = await salvarTeto(cc, teto);
+        if(msg){ erro('Não foi possível salvar: ' + msg); return; }
+        state.modal = null;
+        showToast('Teto de ' + cc + ' salvo.');
+      };
+    }
 
     app.appendChild(overlay);
   }

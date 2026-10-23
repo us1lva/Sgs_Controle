@@ -1,0 +1,10 @@
+{
+  "name": "Controle de Estoque - BackOffice",
+  "short_name": "Estoque",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#F47920",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
